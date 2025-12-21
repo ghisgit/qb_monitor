@@ -1,0 +1,17 @@
+rules:
+  added:
+    - ""
+  completed:
+    - ""
+
+qbittorrent:
+  host: "http://127.0.0.1:8080"
+  username: "admin"
+  password: "adminadmin"
+
+processor:
+  poll_interval_seconds: 30
+  stall_timeout_minutes: 30
+  max_worker_threads: 3
+
+debug_mode: true
