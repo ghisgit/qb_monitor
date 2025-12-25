@@ -1,12 +1,14 @@
 import time
 import queue
+import logging
 from datetime import datetime, timedelta
 from typing import Dict, Tuple
+
 from client import QBittorrentClient
 from models import TorrentTask, TorrentFile
-from logger import setup_logger
 
-logger = setup_logger(__name__)
+
+logger = logging.getLogger(__name__)
 
 
 class TorrentOrchestrator:
@@ -38,11 +40,9 @@ class TorrentOrchestrator:
             stalled_torrents = []
 
             for t in all_torrents:
-                if t.state in ("metaDL", "stalledDL"):
+                if t.state in ("metaDL", "stalledDL") and t.progress < 0.95:
                     stalled_torrents.append(t)
-                if t.hash == t.name:
-                    continue
-                if "processing" in t.tags:
+                if not t.has_metadata or "processing" in t.tags:
                     continue
                 if "added" in t.tags:
                     added_torrents.append(t)
@@ -143,7 +143,7 @@ class TorrentOrchestrator:
             processing_hashes = [
                 t.hash
                 for t in all_torrents
-                if "processing" in t.tags and t.hash != t.name  # 排除 metaDL
+                if "processing" in t.tags and t.has_metadata  # 排除 metaDL
             ]
 
             if not processing_hashes:

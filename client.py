@@ -1,11 +1,11 @@
 import time
+import logging
 import requests
 import functools
 from typing import Tuple, Type, Callable, Any
-from qbittorrentapi import Client, APIError
-from logger import setup_logger
+from qbittorrentapi import Client, APIError, TorrentFilesList, TorrentInfoList
 
-logger = setup_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def retry(
@@ -66,14 +66,14 @@ class QBittorrentClient:
         backoff=1.5,
         exceptions=(APIError, requests.ReadTimeout),
     )
-    def get_torrents(self):
+    def get_torrents(self) -> TorrentInfoList:
         return self.client.torrents_info()
 
     @retry(
         delay=1.0,
         exceptions=(APIError, requests.ReadTimeout),
     )
-    def get_torrent_files(self, hash):
+    def get_torrent_files(self, hash) -> TorrentFilesList:
         return self.client.torrents_files(torrent_hash=hash)
 
     @retry(

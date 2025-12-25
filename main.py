@@ -1,23 +1,43 @@
+import sys
+import logging
 import threading
 import queue
 import time
 import yaml
+from pathlib import Path
+from logging.handlers import RotatingFileHandler
+
 from models import MatchRule
 from client import QBittorrentClient
 from orchestrator import TorrentOrchestrator
 from handlers.added_handler import AddedHandler
 from handlers.completed_handler import CompletedHandler
-from logger import setup_logger
 
 
 with open("config.yaml") as f:
     data = yaml.safe_load(f)
 
+log_filename = Path(data["logfile"])
+log_filename.parent.mkdir(parents=True, exist_ok=True)
 
-global_logger = setup_logger(debug=data["debug_mode"])
+logging.basicConfig(
+    level=logging.DEBUG if data["debug_mode"] else logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        RotatingFileHandler(
+            filename=log_filename,
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5,
+            encoding="utf-8",
+        ),
+    ],
+    force=True,
+)
 
 
 def main():
+    logger = logging.getLogger("qb_monitor")
 
     client = QBittorrentClient(
         host=data["qbittorrent"]["host"],
@@ -43,7 +63,7 @@ def main():
                 elif task.tag == "completed":
                     completed_handler.handle(task)
             except Exception as e:
-                global_logger.error(
+                logger.error(
                     f"Handler error for {task.hash[:8]} ({task.name}): {e}",
                     exc_info=True,
                 )
@@ -62,12 +82,12 @@ def main():
     )
     threading.Thread(target=orchestrator.run, daemon=True, name="Orchestrator").start()
 
-    global_logger.info("🚀 All services started. Press Ctrl+C to exit.")
+    logger.info("🚀 All services started. Press Ctrl+C to exit.")
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        global_logger.info("🛑 Shutting down...")
+        logger.info("🛑 Shutting down...")
 
 
 if __name__ == "__main__":

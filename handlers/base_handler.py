@@ -1,14 +1,14 @@
+import logging
 from abc import ABC, abstractmethod
 from client import QBittorrentClient
 from models import TorrentTask, MatchRule
-from logger import setup_logger
 
 
 class BaseHandler(ABC):
     def __init__(self, client: QBittorrentClient, rules: list[MatchRule]):
         self.client = client
         self.rules = rules
-        self.logger = setup_logger(self.__class__.__name__)
+        self.logger = logging.getLogger(self.__class__.__name__)
 
     def _match_rule(self, name: str) -> MatchRule | None:
         """返回第一个匹配的规则，并记录调试信息"""

@@ -14,4 +14,5 @@ processor:
   stall_timeout_minutes: 30
   max_worker_threads: 3
 
+logfile: "logs/qb_auto.log"
 debug_mode: true
