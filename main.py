@@ -48,7 +48,11 @@ def main():
     task_queue = queue.Queue()
 
     # Handlers
-    added_handler = AddedHandler(client, [MatchRule(p) for p in data["rules"]["added"]])
+    added_handler = AddedHandler(
+        client,
+        [MatchRule(p) for p in data["rules"]["added"]],
+        size=data["rules"]["size"] * 1024 * 1024,  # 把兆字节 (MB)转换为字节 (Bytes)
+    )
     completed_handler = CompletedHandler(
         client, [MatchRule(p) for p in data["rules"]["completed"]]
     )
@@ -58,9 +62,9 @@ def main():
         while True:
             task = task_queue.get()  # 阻塞等待任务
             try:
-                if task.tag == "added":
+                if "added" in task.tags:
                     added_handler.handle(task)
-                elif task.tag == "completed":
+                elif "completed" in task.tags:
                     completed_handler.handle(task)
             except Exception as e:
                 logger.error(

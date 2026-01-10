@@ -1,13 +1,19 @@
 import logging
 from abc import ABC, abstractmethod
 from client import QBittorrentClient
-from models import TorrentTask, MatchRule
+from models import MatchRule
 
 
 class BaseHandler(ABC):
-    def __init__(self, client: QBittorrentClient, rules: list[MatchRule]):
+    def __init__(
+        self,
+        client: QBittorrentClient,
+        rules: list[MatchRule],
+        size: float = 0.0,
+    ):
         self.client = client
         self.rules = rules
+        self.size = size
         self.logger = logging.getLogger(self.__class__.__name__)
 
     def _match_rule(self, name: str) -> MatchRule | None:
@@ -30,5 +36,5 @@ class BaseHandler(ABC):
             )
 
     @abstractmethod
-    def handle(self, task: TorrentTask):
+    def handle(self, task):
         pass

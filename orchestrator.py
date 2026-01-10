@@ -4,8 +4,9 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, Tuple
 
+from qbittorrentapi import TorrentInfoList, TorrentDictionary
+
 from client import QBittorrentClient
-from models import TorrentTask, TorrentFile
 
 
 logger = logging.getLogger(__name__)
@@ -31,22 +32,31 @@ class TorrentOrchestrator:
 
     def _process_torrents(self):
         try:
-            all_torrents = self.client.get_torrents()
+            all_torrents: TorrentInfoList = self.client.get_torrents()
 
             now = datetime.now()
 
-            added_torrents = []
-            completed_torrents = []
-            stalled_torrents = []
+            added_torrents: list[TorrentDictionary] = []
+            completed_torrents: list[TorrentDictionary] = []
+            stalled_torrents: list[TorrentDictionary] = []
 
             for t in all_torrents:
-                if t.state in ("metaDL", "stalledDL") and t.progress < 0.95:
+                # 分类
+                state = t.state
+                # 进度
+                prog = t.progress
+                # 是否在下载元数据
+                metadata = t.has_metadata
+                # 标签
+                tags = t.tags
+
+                if state in ("metaDL", "stalledDL") and prog < 0.95:
                     stalled_torrents.append(t)
-                if not t.has_metadata or "processing" in t.tags:
+                if not metadata or "processing" in tags:
                     continue
-                if "added" in t.tags:
+                if "added" in tags:
                     added_torrents.append(t)
-                elif "completed" in t.tags:
+                elif "completed" in tags:
                     completed_torrents.append(t)
 
             # 处理 added
@@ -55,22 +65,7 @@ class TorrentOrchestrator:
                 self.client.add_torrents_tag(hashes=added_hashes, tag="processing")
 
                 for t in added_torrents:
-                    try:
-                        files = self.client.get_torrent_files(hash=t.hash)
-                        task = TorrentTask(
-                            hash=t.hash,
-                            name=t.name,
-                            tag="added",
-                            content_path=getattr(t, "content_path", ""),
-                            files=[
-                                TorrentFile(id=f.id, name=f.name, priority=f.priority)
-                                for f in files
-                            ],
-                        )
-                        self.task_queue.put(task)
-                        logger.debug(f"→ Queued 'added' task for '{t.name}'")
-                    except Exception as e:
-                        logger.error(f"❌ Failed to load files for {t.hash[:8]}: {e}")
+                    self.task_queue.put(t)
 
                 self.client.remove_torrents_tag(hashes=added_hashes, tag="added")
 
@@ -80,13 +75,7 @@ class TorrentOrchestrator:
                 self.client.add_torrents_tag(hashes=completed_hashes, tag="processing")
 
                 for t in completed_torrents:
-                    task = TorrentTask(
-                        hash=t.hash,
-                        name=t.name,
-                        tag="completed",
-                        content_path=getattr(t, "content_path", ""),
-                    )
-                    self.task_queue.put(task)
+                    self.task_queue.put(t)
 
                 self.client.remove_torrents_tag(
                     hashes=completed_hashes, tag="completed"
@@ -100,7 +89,7 @@ class TorrentOrchestrator:
                 for t in stalled_torrents:
                     h = t.hash
                     prog = t.progress
-                    name = getattr(t, "name", "<unknown>")
+                    name = t.name
 
                     if h not in self._progress_cache:
                         self._progress_cache[h] = (prog, now)
@@ -135,25 +124,40 @@ class TorrentOrchestrator:
     def _recover_processing_tasks(self) -> None:
         """
         启动时恢复卡在 'processing' 状态的种子。
-        移除 'processing' 标签，让它们能被重新处理。
+        移除 'processing' 标签，并根据下载进度添加对应的标签，让它们能被重新处理。
         """
         try:
-            all_torrents = self.client.get_torrents()
+            all_torrents = self.client.get_torrents(tag="processing")
 
-            processing_hashes = [
-                t.hash
-                for t in all_torrents
-                if "processing" in t.tags and t.has_metadata  # 排除 metaDL
-            ]
-
-            if not processing_hashes:
+            if not all_torrents:
                 logger.debug("→ No orphaned 'processing' tasks found at startup.")
                 return
 
             logger.info(
-                f"🔄 Recovering {len(processing_hashes)} orphaned 'processing' tasks..."
+                f"🔄 Recovering {len(all_torrents)} orphaned 'processing' tasks..."
             )
-            self.client.remove_torrents_tag(hashes=processing_hashes, tag="processing")
+            self.client.remove_torrents_tag(
+                hashes=[t.hash for t in all_torrents], tag="processing"
+            )
+
+            added_torrents = []
+            completed_torrents = []
+
+            for t in all_torrents:
+                if t.progress < 1:
+                    added_torrents.append(t.hash)
+                else:
+                    completed_torrents.append(t.hash)
+
+            if added_torrents:
+                self.client.add_torrents_tag(hashes=added_torrents, tag="added")
+                logger.info(f"🔄 Recovering {len(added_torrents)} 'added' tasks...")
+            if completed_torrents:
+                self.client.add_torrents_tag(hashes=completed_torrents, tag="completed")
+                logger.info(
+                    f"🔄 Recovering {len(completed_torrents)} 'completed' tasks..."
+                )
+
             logger.info("✅ Orphaned 'processing' tags cleaned up.")
 
         except Exception as e:

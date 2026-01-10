@@ -1,22 +1,6 @@
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional
-
-
-@dataclass
-class TorrentFile:
-    id: int
-    name: str
-    priority: int
-
-
-@dataclass
-class TorrentTask:
-    hash: str
-    name: str
-    tag: str
-    content_path: str
-    files: Optional[List[TorrentFile]] = None
+from typing import Optional
 
 
 @dataclass

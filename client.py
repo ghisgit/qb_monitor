@@ -27,7 +27,7 @@ def retry(
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            current_delay = delay
+            current_delay = min(delay, 30)
             for attempt in range(1, max_attempts + 1):
                 try:
                     return func(*args, **kwargs)
@@ -66,14 +66,14 @@ class QBittorrentClient:
         backoff=1.5,
         exceptions=(APIError, requests.ReadTimeout),
     )
-    def get_torrents(self) -> TorrentInfoList:
-        return self.client.torrents_info()
+    def get_torrents(self, tag: str | None = None) -> TorrentInfoList:
+        return self.client.torrents_info(tag=tag)
 
     @retry(
         delay=1.0,
         exceptions=(APIError, requests.ReadTimeout),
     )
-    def get_torrent_files(self, hash) -> TorrentFilesList:
+    def get_torrent_files(self, hash: str | None = None) -> TorrentFilesList:
         return self.client.torrents_files(torrent_hash=hash)
 
     @retry(

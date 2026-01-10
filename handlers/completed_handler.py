@@ -1,11 +1,13 @@
 import shutil
 from pathlib import Path
-from models import TorrentTask
+
+from qbittorrentapi import TorrentDictionary
+
 from handlers.base_handler import BaseHandler
 
 
 class CompletedHandler(BaseHandler):
-    def handle(self, task: TorrentTask) -> None:
+    def handle(self, task: TorrentDictionary) -> None:
         short_hash = task.hash[:8]
         self.logger.info(f"[COMPLETED] 🧹 Cleaning '{task.name}' ({short_hash})")
 
