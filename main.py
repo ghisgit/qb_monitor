@@ -22,7 +22,7 @@ log_filename.parent.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
     level=logging.DEBUG if data["debug_mode"] else logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s.%(msecs)03d | %(levelname)-8s | %(name)15s | T:%(threadName)-10s | %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
         RotatingFileHandler(
@@ -34,6 +34,7 @@ logging.basicConfig(
     ],
     force=True,
 )
+logging.getLogger("urllib3.connectionpool").setLevel(logging.INFO)
 
 
 def main():
