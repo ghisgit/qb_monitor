@@ -25,9 +25,7 @@ class AddedHandler(BaseHandler):
         file_id_to_name = {f.id: f.name for f in files}
 
         files_to_disable: List[int] = [
-            f.id
-            for f in files
-            if f.priority != 0 and (self._match_rule(f.name) or self.size > f.size)
+            f.id for f in files if f.priority != 0 and self._match_rule(f.name)
         ]
 
         if not files_to_disable:

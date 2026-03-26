@@ -5,15 +5,9 @@ from models import MatchRule
 
 
 class BaseHandler(ABC):
-    def __init__(
-        self,
-        client: QBittorrentClient,
-        rules: list[MatchRule],
-        size: float = 0.0,
-    ):
+    def __init__(self, client: QBittorrentClient, rules: list[MatchRule]):
         self.client = client
         self.rules = rules
-        self.size = size
         self.logger = logging.getLogger(self.__class__.__name__)
 
     def _match_rule(self, name: str) -> MatchRule | None:

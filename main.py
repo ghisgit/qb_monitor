@@ -49,11 +49,7 @@ def main():
     task_queue = queue.Queue()
 
     # Handlers
-    added_handler = AddedHandler(
-        client,
-        [MatchRule(p) for p in data["rules"]["added"]],
-        size=data["rules"]["size"] * 1024 * 1024,  # 把兆字节 (MB)转换为字节 (Bytes)
-    )
+    added_handler = AddedHandler(client, [MatchRule(p) for p in data["rules"]["added"]])
     completed_handler = CompletedHandler(
         client, [MatchRule(p) for p in data["rules"]["completed"]]
     )

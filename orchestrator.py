@@ -41,18 +41,18 @@ class TorrentOrchestrator:
             stalled_torrents: list[TorrentDictionary] = []
 
             for t in all_torrents:
-                # 分类
+                # 状态
                 state = t.state
                 # 进度
                 prog = t.progress
                 # 是否在下载元数据
-                metadata = t.has_metadata
+                is_metadata = t.has_metadata
                 # 标签
                 tags = t.tags
 
-                if state in ("metaDL", "stalledDL") and prog < 0.95:
+                if state == "metaDL" and is_metadata:
                     stalled_torrents.append(t)
-                if not metadata or "processing" in tags:
+                if not is_metadata or "processing" in tags:
                     continue
                 if "added" in tags:
                     added_torrents.append(t)

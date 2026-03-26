@@ -1,7 +1,6 @@
 import os
 import shutil
 from pathlib import Path
-from typing import List
 
 from qbittorrentapi import TorrentDictionary
 
@@ -14,6 +13,11 @@ class CompletedHandler(BaseHandler):
         self.logger.info(f"[COMPLETED] 🧹 Cleaning '{task.name}' ({short_hash})")
 
         content_path = Path(task.content_path)
+        save_path = Path(task.save_path)
+        if content_path == save_path:
+            self.logger.debug("    → Skipping: single-file torrent")
+            self._cleanup_processing_tag(task.hash)
+            return
 
         if not self._ensure_content_path_exists(content_path, task.name):
             self._cleanup_processing_tag(task.hash)
@@ -63,7 +67,8 @@ class CompletedHandler(BaseHandler):
 
     def _clean_matching_items(self, content_path: Path) -> int:
         """
-        清理匹配跳过规则的文件/目录，并递归删除所有空子目录（包括多层嵌套）。
+        递归清理 content_path 下所有匹配跳过规则的文件和目录，
+        然后递归删除所有因此产生的空目录（包括多层嵌套）。
         返回删除的总项数（文件 + 目录）。
         """
         if not content_path.is_dir():
@@ -72,46 +77,55 @@ class CompletedHandler(BaseHandler):
 
         deleted_count = 0
 
-        # 第一步：扫描并删除直接匹配规则的文件和目录（仅一级）
+        # 第一步：递归收集所有匹配规则的路径（深度优先，先子后父）
         try:
-            direct_entries: List[Path] = list(content_path.iterdir())
+            # 使用 os.walk(topdown=False) 便于后续安全删除（先删深层）
+            all_paths = []
+            for root, dirs, files in os.walk(content_path, topdown=False):
+                # 先处理文件
+                for f in files:
+                    file_path = Path(root) / f
+                    if self._match_rule(f):
+                        all_paths.append(file_path)
+                # 再处理目录（注意：此时子目录可能已被标记删除，但没关系）
+                for d in dirs:
+                    dir_path = Path(root) / d
+                    if self._match_rule(d):
+                        all_paths.append(dir_path)
         except OSError as e:
-            self.logger.error(f"    ❌ Cannot read directory {content_path}: {e}")
+            self.logger.error(
+                f"    ❌ Failed to scan directory tree {content_path}: {e}"
+            )
             return 0
 
-        if not direct_entries:
-            self.logger.debug(f"    → Directory is empty: {content_path}")
-            return 0
+        if not all_paths:
+            self.logger.debug(
+                f"    → No items matched deletion rules in {content_path}"
+            )
+            # 即便没有匹配项，仍需检查是否全空？→ 由第二步处理
+        else:
+            self.logger.debug(f"    → Found {len(all_paths)} items matching rules")
 
-        self.logger.debug(
-            f"    → Scanning {len(direct_entries)} items in {content_path}"
-        )
-
-        for entry in direct_entries:
-            if self._match_rule(entry.name):
-                try:
-                    if entry.is_dir():
-                        shutil.rmtree(entry)
-                        self.logger.debug(
-                            f"      🗑️ Deleted dir (rule match): {entry.name}"
-                        )
+        # 删除所有匹配项
+        for path in all_paths:
+            try:
+                if path.exists():
+                    if path.is_dir():
+                        shutil.rmtree(path)
+                        self.logger.debug(f"      🗑️ Deleted dir (rule match): {path}")
                     else:
-                        entry.unlink()
-                        self.logger.debug(
-                            f"      🗑️ Deleted file (rule match): {entry.name}"
-                        )
+                        path.unlink()
+                        self.logger.debug(f"      🗑️ Deleted file (rule match): {path}")
                     deleted_count += 1
-                except OSError as e:
-                    self.logger.error(f"      ❌ Failed to delete {entry}: {e}")
+            except OSError as e:
+                self.logger.error(f"      ❌ Failed to delete {path}: {e}")
 
-        # 第二步：递归删除所有空子目录（自底向上）
+        # 第二步：递归删除所有空目录（自底向上）
         try:
-            # topdown=False 确保从最深的子目录开始处理
             for root, dirs, files in os.walk(content_path, topdown=False):
                 for d in dirs:
                     dir_path = Path(root) / d
                     try:
-                        # 检查是否为空（且存在）
                         if dir_path.exists() and not any(dir_path.iterdir()):
                             dir_path.rmdir()
                             self.logger.debug(
@@ -119,7 +133,7 @@ class CompletedHandler(BaseHandler):
                             )
                             deleted_count += 1
                     except OSError:
-                        # 目录可能已被删除、被占用，或刚有新文件写入 —— 安静跳过
+                        # 被占用、不存在或刚写入 —— 安静跳过
                         continue
         except OSError as e:
             self.logger.error(f"    ❌ Error during recursive empty-dir cleanup: {e}")
