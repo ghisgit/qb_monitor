@@ -1,5 +1,31 @@
+# 配置
 config.yaml
 
+# 日志
 logs/
-tests/
+
+# Python 编译缓存
 __pycache__/
+*.py[cod]
+*.pyo
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 测试
+tests/
+test_*.py
+*_test.py

@@ -1,12 +1,7 @@
 #!/bin/bash
-# qBittorrent 完成种子时调用
-# 参数: %K: Torrent ID
-
-# 获取脚本所在目录（兼容 source 或 symlink）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/logs/completed_tag.log"
 
-# 日志函数
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
 }
@@ -14,10 +9,9 @@ log() {
 TORRENT_ID="$1"
 TAG="completed"
 URL="http://127.0.0.1:8080/api/v2/torrents/addTags"
-MAX_RETRIES=99
+MAX_RETRIES=10
 RETRY_DELAY=2
 
-# 输入校验
 if [[ -z "$TORRENT_ID" ]]; then
     log "错误：未提供种子哈希值。用法: $0 <torrent_id>"
     echo "错误：请提供种子哈希值。" >&2

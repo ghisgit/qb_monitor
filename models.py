@@ -1,12 +1,14 @@
 import re
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 
 @dataclass
 class MatchRule:
     pattern: str
-    _compiled: Optional[re.Pattern] = field(init=False)
+    compiled: re.Pattern | None = None
 
     def __post_init__(self):
-        self._compiled = re.compile(self.pattern, re.IGNORECASE)
+        self.compiled = re.compile(self.pattern, re.IGNORECASE)
+
+    def matches(self, text: str) -> bool:
+        return bool(self.compiled.search(text))

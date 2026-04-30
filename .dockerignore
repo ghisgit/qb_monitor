@@ -1,0 +1,48 @@
+# 配置（通过 volume 挂载）
+config.yaml
+template_config.yaml
+
+# Shell 脚本（由 qBittorrent 调用，不在容器内运行）
+scripts/
+
+# 日志
+logs/
+
+# Python 编译缓存
+__pycache__/
+*.py[cod]
+*.pyo
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# 文档
+README.md
+
+# Docker 自身
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# 测试
+tests/
+test_*.py
+*_test.py

@@ -1,13 +1,12 @@
-import time
 import queue
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, Tuple
+import threading
+from datetime import timedelta
+from typing import Callable
 
 from qbittorrentapi import TorrentInfoList, TorrentDictionary
 
 from client import QBittorrentClient
-
 
 logger = logging.getLogger(__name__)
 
@@ -19,47 +18,51 @@ class TorrentOrchestrator:
         task_queue: queue.Queue,
         poll_interval_seconds: int = 30,
         stall_timeout_minutes: int = 30,
-        skip_patterns=None,
     ):
         self.client = client
         self.task_queue = task_queue
         self.poll_interval = poll_interval_seconds
         self.stall_timeout = timedelta(minutes=stall_timeout_minutes)
-        self.skip_patterns = skip_patterns or []
+        self._dispatcher: dict[str, Callable] = {}
+        self._stop_event = threading.Event()
 
-        # StallMonitor 状态缓存
-        self._progress_cache: Dict[str, Tuple[float, datetime]] = {}
+    def register_handler(self, tag: str, handler_fn: Callable):
+        self._dispatcher[tag] = handler_fn
+
+    def dispatch(self, task):
+        for tag, handler_fn in self._dispatcher.items():
+            if tag in task.tags:
+                handler_fn(task)
+                return
+        logger.warning(f"No handler for tags: {task.tags}")
 
     def _process_torrents(self):
         try:
             all_torrents: TorrentInfoList = self.client.get_torrents()
 
-            now = datetime.now()
-
             added_torrents: list[TorrentDictionary] = []
             completed_torrents: list[TorrentDictionary] = []
             stalled_torrents: list[TorrentDictionary] = []
+            downloading_count = 0
 
             for t in all_torrents:
-                # 状态
                 state = t.state
-                # 进度
-                prog = t.progress
-                # 是否在下载元数据
                 is_metadata = t.has_metadata
-                # 标签
                 tags = t.tags
 
-                if state == "metaDL" and is_metadata:
-                    stalled_torrents.append(t)
                 if not is_metadata or "processing" in tags:
+                    if state == "metaDL":
+                        stalled_torrents.append(t)
                     continue
+
                 if "added" in tags:
                     added_torrents.append(t)
                 elif "completed" in tags:
                     completed_torrents.append(t)
 
-            # 处理 added
+                if state in ("downloading", "metaDL", "stalledDL", "forcedDL"):
+                    downloading_count += 1
+
             if added_torrents:
                 added_hashes = [t.hash for t in added_torrents]
                 self.client.add_torrents_tag(hashes=added_hashes, tag="processing")
@@ -69,7 +72,6 @@ class TorrentOrchestrator:
 
                 self.client.remove_torrents_tag(hashes=added_hashes, tag="added")
 
-            # 处理 completed
             if completed_torrents:
                 completed_hashes = [t.hash for t in completed_torrents]
                 self.client.add_torrents_tag(hashes=completed_hashes, tag="processing")
@@ -81,51 +83,21 @@ class TorrentOrchestrator:
                     hashes=completed_hashes, tag="completed"
                 )
 
-            # 监控卡顿种子
-            if stalled_torrents:
-                current_hash_set = {t.hash for t in stalled_torrents}
+            if stalled_torrents and downloading_count > 200:
                 hashes_to_demote = []
 
                 for t in stalled_torrents:
-                    h = t.hash
-                    prog = t.progress
-                    name = t.name
+                    if timedelta(seconds=t.time_active) > self.stall_timeout:
+                        hashes_to_demote.append(t.hash)
 
-                    if h not in self._progress_cache:
-                        self._progress_cache[h] = (prog, now)
-                        continue
-
-                    last_prog, last_active = self._progress_cache[h]
-                    if prog > last_prog + 1e-6:
-                        self._progress_cache[h] = (prog, now)
-                    else:
-                        stalled_duration = now - last_active
-                        if stalled_duration >= self.stall_timeout:
-                            if h not in hashes_to_demote:
-                                hashes_to_demote.append(h)
-                                logger.info(
-                                    f"⏳ Demoting '{name}' ({h[:8]}): "
-                                    f"{prog:.2%} stalled for {stalled_duration.total_seconds()/60:.1f}m"
-                                )
-
-                # 执行降级
                 if hashes_to_demote:
                     self.client.move_to_bottom(hashes=hashes_to_demote)
                     logger.info(f"✅ Demoted {len(hashes_to_demote)} torrents")
-
-                # 清理缓存
-                stale_keys = set(self._progress_cache.keys()) - current_hash_set
-                for h in stale_keys:
-                    del self._progress_cache[h]
 
         except Exception as e:
             logger.error(f"💥 Error in orchestration cycle: {e}", exc_info=True)
 
     def _recover_processing_tasks(self) -> None:
-        """
-        启动时恢复卡在 'processing' 状态的种子。
-        移除 'processing' 标签，并根据下载进度添加对应的标签，让它们能被重新处理。
-        """
         try:
             all_torrents = self.client.get_torrents(tag="processing")
 
@@ -163,6 +135,9 @@ class TorrentOrchestrator:
         except Exception as e:
             logger.error(f"⚠️ Failed to recover processing tasks: {e}")
 
+    def stop(self):
+        self._stop_event.set()
+
     def run(self):
         logger.info(
             f"🔄 TorrentOrchestrator started | "
@@ -172,6 +147,6 @@ class TorrentOrchestrator:
 
         self._recover_processing_tasks()
 
-        while True:
+        while not self._stop_event.is_set():
             self._process_torrents()
-            time.sleep(self.poll_interval)
+            self._stop_event.wait(timeout=self.poll_interval)

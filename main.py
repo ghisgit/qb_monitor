@@ -2,7 +2,6 @@ import sys
 import logging
 import threading
 import queue
-import time
 import yaml
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
@@ -13,31 +12,70 @@ from orchestrator import TorrentOrchestrator
 from handlers.added_handler import AddedHandler
 from handlers.completed_handler import CompletedHandler
 
+CONFIG_SCHEMA = {
+    "qbittorrent": ["host", "username", "password"],
+    "processor": ["poll_interval_seconds", "stall_timeout_minutes", "max_worker_threads"],
+    "rules": ["added", "completed"],
+    "logfile": [],
+    "debug_mode": [],
+}
 
-with open("config.yaml") as f:
-    data = yaml.safe_load(f)
 
-log_filename = Path(data["logfile"])
-log_filename.parent.mkdir(parents=True, exist_ok=True)
+def load_config(path: str = "config.yaml") -> dict:
+    with open(path, encoding="utf8") as f:
+        data = yaml.safe_load(f)
 
-logging.basicConfig(
-    level=logging.DEBUG if data["debug_mode"] else logging.INFO,
-    format="%(asctime)s.%(msecs)03d | %(levelname)-8s | %(name)15s | T:%(threadName)-10s | %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        RotatingFileHandler(
-            filename=log_filename,
-            maxBytes=10 * 1024 * 1024,
-            backupCount=5,
-            encoding="utf-8",
-        ),
-    ],
-    force=True,
-)
-logging.getLogger("urllib3.connectionpool").setLevel(logging.INFO)
+    validate_config(data)
+    return data
+
+
+def validate_config(data: dict):
+    missing = []
+    for section, keys in CONFIG_SCHEMA.items():
+        if section not in data:
+            missing.append(section)
+            continue
+        for key in keys:
+            if key not in data[section]:
+                missing.append(f"{section}.{key}")
+
+    if missing:
+        raise ValueError(f"Missing config keys: {', '.join(missing)}")
+
+    poll = data["processor"]["poll_interval_seconds"]
+    if not isinstance(poll, (int, float)) or poll <= 0:
+        raise ValueError("processor.poll_interval_seconds must be a positive number")
+
+    max_workers = data["processor"]["max_worker_threads"]
+    if not isinstance(max_workers, int) or max_workers < 1:
+        raise ValueError("processor.max_worker_threads must be a positive integer")
+
+
+def setup_logging(data: dict):
+    log_filename = Path(data["logfile"])
+    log_filename.parent.mkdir(parents=True, exist_ok=True)
+
+    logging.basicConfig(
+        level=logging.DEBUG if data["debug_mode"] else logging.INFO,
+        format="%(asctime)s.%(msecs)03d | %(levelname)-8s | %(name)15s | T:%(threadName)-10s | %(message)s",
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            RotatingFileHandler(
+                filename=log_filename,
+                maxBytes=10 * 1024 * 1024,
+                backupCount=5,
+                encoding="utf-8",
+            ),
+        ],
+        force=True,
+    )
+    logging.getLogger("urllib3.connectionpool").setLevel(logging.INFO)
 
 
 def main():
+    data = load_config()
+    setup_logging(data)
+
     logger = logging.getLogger("qb_monitor")
 
     client = QBittorrentClient(
@@ -48,21 +86,30 @@ def main():
 
     task_queue = queue.Queue()
 
-    # Handlers
     added_handler = AddedHandler(client, [MatchRule(p) for p in data["rules"]["added"]])
     completed_handler = CompletedHandler(
         client, [MatchRule(p) for p in data["rules"]["completed"]]
     )
 
-    # Worker thread (consumer)
+    orchestrator = TorrentOrchestrator(
+        client=client,
+        task_queue=task_queue,
+        poll_interval_seconds=data["processor"]["poll_interval_seconds"],
+        stall_timeout_minutes=data["processor"]["stall_timeout_minutes"],
+    )
+    orchestrator.register_handler("added", added_handler.handle)
+    orchestrator.register_handler("completed", completed_handler.handle)
+
+    stop_event = threading.Event()
+
     def worker():
-        while True:
-            task = task_queue.get()  # 阻塞等待任务
+        while not stop_event.is_set():
             try:
-                if "added" in task.tags:
-                    added_handler.handle(task)
-                elif "completed" in task.tags:
-                    completed_handler.handle(task)
+                task = task_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            try:
+                orchestrator.dispatch(task)
             except Exception as e:
                 logger.error(
                     f"Handler error for {task.hash[:8]} ({task.name}): {e}",
@@ -71,24 +118,24 @@ def main():
             finally:
                 task_queue.task_done()
 
-    # Start threads
+    worker_threads = []
     for i in range(data["processor"]["max_worker_threads"]):
-        threading.Thread(target=worker, daemon=True, name=f"TaskWorker-{i}").start()
+        t = threading.Thread(target=worker, daemon=True, name=f"TaskWorker-{i}")
+        t.start()
+        worker_threads.append(t)
 
-    orchestrator = TorrentOrchestrator(
-        client=client,
-        task_queue=task_queue,
-        poll_interval_seconds=data["processor"]["poll_interval_seconds"],
-        stall_timeout_minutes=data["processor"]["stall_timeout_minutes"],
-    )
-    threading.Thread(target=orchestrator.run, daemon=True, name="Orchestrator").start()
+    orch_thread = threading.Thread(target=orchestrator.run, daemon=True, name="Orchestrator")
+    orch_thread.start()
 
     logger.info("🚀 All services started. Press Ctrl+C to exit.")
     try:
-        while True:
-            time.sleep(1)
+        stop_event.wait()
     except KeyboardInterrupt:
         logger.info("🛑 Shutting down...")
+        orchestrator.stop()
+        stop_event.set()
+        task_queue.join()
+        logger.info("✅ All tasks completed. Bye!")
 
 
 if __name__ == "__main__":

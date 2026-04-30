@@ -15,15 +15,14 @@ def retry(
     exceptions: Tuple[Type[Exception], ...] = (Exception,),
 ):
     """
-    重试装饰器
+    指数退避重试装饰器。
 
     Args:
-        max_attempts: 最大重试次数（包括首次调用）
-        delay: 初始延迟秒数
-        backoff: 延迟倍增因子（delay *= backoff）
-        exceptions: 需要重试的异常类型
+        max_attempts: 最大重试次数（含首次调用）
+        delay: 初始延迟秒数，上限30s
+        backoff: 延迟倍增因子（每次重试 delay *= backoff，上限30s）
+        exceptions: 需要重试的异常类型元组
     """
-
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -43,7 +42,7 @@ def retry(
                             f"Retrying in {current_delay:.1f}s..."
                         )
                         time.sleep(current_delay)
-                        current_delay *= backoff
+                        current_delay = min(current_delay * backoff, 30)
             return None
 
         return wrapper
@@ -66,8 +65,10 @@ class QBittorrentClient:
         backoff=1.5,
         exceptions=(APIError, requests.ReadTimeout),
     )
-    def get_torrents(self, tag: str | None = None) -> TorrentInfoList:
-        return self.client.torrents_info(tag=tag)
+    def get_torrents(
+        self, tag: str | None = None, status_filter: str | None = None
+    ) -> TorrentInfoList:
+        return self.client.torrents_info(tag=tag, status_filter=status_filter)
 
     @retry(
         delay=1.0,
@@ -104,4 +105,4 @@ class QBittorrentClient:
         exceptions=(APIError, requests.ReadTimeout),
     )
     def move_to_bottom(self, hashes):
-        self.client.torrents_bottom_priority(torrent_hashes=hashes)
+        return self.client.torrents_bottom_priority(torrent_hashes=hashes)
