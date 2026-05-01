@@ -1,18 +1,31 @@
+# 种子匹配规则（正则表达式，不区分大小写）
 rules:
-  added:
+  added: # 新增种子时触发的规则，匹配文件名将跳过下载
     - ""
-  completed:
+  completed: # 种子完成时触发的规则，匹配文件名/目录名将删除
     - ""
 
+# qBittorrent WebUI 连接配置
 qbittorrent:
-  host: "http://127.0.0.1:8080"
-  username: "admin"
-  password: "adminadmin"
+  host: "http://127.0.0.1:8080" # WebUI 地址
+  username: "admin" # WebUI 用户名
+  password: "adminadmin" # WebUI 密码
 
+# 处理器运行参数
 processor:
-  poll_interval_seconds: 30
-  stall_timeout_minutes: 30
-  max_worker_threads: 3
+  poll_interval_seconds: 30 # 轮询间隔（秒），检查种子状态的频率
+  stall_timeout_minutes: 30 # 停滞超时（分钟），超过此时间的元数据下载种子将被降级
+  max_worker_threads: 3 # 最大工作线程数，并发处理种子的数量
 
-logfile: "logs/qb_auto.log"
-debug_mode: true
+# 日志系统配置
+logging:
+  logfile: "logs/qb_auto.log" # 日志文件路径
+  level: "DEBUG" # 日志级别: DEBUG / INFO / WARNING / ERROR / FATAL
+  environment: "development" # 运行环境: development / testing / production
+  json_format: false # true=JSON结构化输出, false=可读文本格式
+  rotation: # 日志轮转策略
+    max_bytes: 10485760 # 单个日志文件最大大小（字节），默认10MB
+    backup_count: 30 # 保留的备份文件数量
+    retention_days: 30 # 日志文件保留天数，超期自动清理
+    when: "midnight" # 按时间轮转: midnight=每日, H=每小时, D=每天
+  sensitive_masking: false # true=自动脱敏password/token/secret等敏感信息

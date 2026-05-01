@@ -1,23 +1,23 @@
-import sys
-import logging
 import threading
 import queue
 import yaml
-from pathlib import Path
-from logging.handlers import RotatingFileHandler
 
 from models import MatchRule
 from client import QBittorrentClient
 from orchestrator import TorrentOrchestrator
 from handlers.added_handler import AddedHandler
 from handlers.completed_handler import CompletedHandler
+from logger import setup_logging, get_logger, ContextFilter
 
 CONFIG_SCHEMA = {
     "qbittorrent": ["host", "username", "password"],
-    "processor": ["poll_interval_seconds", "stall_timeout_minutes", "max_worker_threads"],
+    "processor": [
+        "poll_interval_seconds",
+        "stall_timeout_minutes",
+        "max_worker_threads",
+    ],
     "rules": ["added", "completed"],
-    "logfile": [],
-    "debug_mode": [],
+    "logging": ["logfile"],
 }
 
 
@@ -51,32 +51,11 @@ def validate_config(data: dict):
         raise ValueError("processor.max_worker_threads must be a positive integer")
 
 
-def setup_logging(data: dict):
-    log_filename = Path(data["logfile"])
-    log_filename.parent.mkdir(parents=True, exist_ok=True)
-
-    logging.basicConfig(
-        level=logging.DEBUG if data["debug_mode"] else logging.INFO,
-        format="%(asctime)s.%(msecs)03d | %(levelname)-8s | %(name)15s | T:%(threadName)-10s | %(message)s",
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            RotatingFileHandler(
-                filename=log_filename,
-                maxBytes=10 * 1024 * 1024,
-                backupCount=5,
-                encoding="utf-8",
-            ),
-        ],
-        force=True,
-    )
-    logging.getLogger("urllib3.connectionpool").setLevel(logging.INFO)
-
-
 def main():
     data = load_config()
     setup_logging(data)
 
-    logger = logging.getLogger("qb_monitor")
+    logger = get_logger("qb_monitor")
 
     client = QBittorrentClient(
         host=data["qbittorrent"]["host"],
@@ -109,13 +88,22 @@ def main():
             except queue.Empty:
                 continue
             try:
+                ContextFilter.set(
+                    operation="task_dispatch",
+                    torrent_hash=task.hash[:8],
+                    torrent_name=task.name,
+                )
                 orchestrator.dispatch(task)
             except Exception as e:
                 logger.error(
-                    f"Handler error for {task.hash[:8]} ({task.name}): {e}",
+                    "Handler error for %s (%s): %s",
+                    task.hash[:8],
+                    task.name,
+                    e,
                     exc_info=True,
                 )
             finally:
+                ContextFilter.clear()
                 task_queue.task_done()
 
     worker_threads = []
@@ -124,7 +112,9 @@ def main():
         t.start()
         worker_threads.append(t)
 
-    orch_thread = threading.Thread(target=orchestrator.run, daemon=True, name="Orchestrator")
+    orch_thread = threading.Thread(
+        target=orchestrator.run, daemon=True, name="Orchestrator"
+    )
     orch_thread.start()
 
     logger.info("🚀 All services started. Press Ctrl+C to exit.")

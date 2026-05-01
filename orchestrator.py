@@ -1,14 +1,15 @@
 import queue
-import logging
 import threading
+import uuid
 from datetime import timedelta
 from typing import Callable
 
 from qbittorrentapi import TorrentInfoList, TorrentDictionary
 
 from client import QBittorrentClient
+from logger import get_logger, ContextFilter
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class TorrentOrchestrator:
@@ -32,11 +33,17 @@ class TorrentOrchestrator:
     def dispatch(self, task):
         for tag, handler_fn in self._dispatcher.items():
             if tag in task.tags:
+                ContextFilter.set(
+                    operation=tag, torrent_hash=task.hash[:8], torrent_name=task.name
+                )
                 handler_fn(task)
                 return
-        logger.warning(f"No handler for tags: {task.tags}")
+        logger.warning("No handler for tags: %s", task.tags)
 
     def _process_torrents(self):
+        cycle_id = uuid.uuid4().hex[:8]
+        ContextFilter.set(request_id=cycle_id, operation="poll_cycle")
+
         try:
             all_torrents: TorrentInfoList = self.client.get_torrents()
 
@@ -71,6 +78,9 @@ class TorrentOrchestrator:
                     self.task_queue.put(t)
 
                 self.client.remove_torrents_tag(hashes=added_hashes, tag="added")
+                logger.info(
+                    "Queued %d added torrents for processing", len(added_torrents)
+                )
 
             if completed_torrents:
                 completed_hashes = [t.hash for t in completed_torrents]
@@ -82,6 +92,10 @@ class TorrentOrchestrator:
                 self.client.remove_torrents_tag(
                     hashes=completed_hashes, tag="completed"
                 )
+                logger.info(
+                    "Queued %d completed torrents for processing",
+                    len(completed_torrents),
+                )
 
             if stalled_torrents and downloading_count > 200:
                 hashes_to_demote = []
@@ -92,21 +106,24 @@ class TorrentOrchestrator:
 
                 if hashes_to_demote:
                     self.client.move_to_bottom(hashes=hashes_to_demote)
-                    logger.info(f"✅ Demoted {len(hashes_to_demote)} torrents")
+                    logger.info("Demoted %d stalled torrents", len(hashes_to_demote))
 
         except Exception as e:
-            logger.error(f"💥 Error in orchestration cycle: {e}", exc_info=True)
+            logger.error("Error in orchestration cycle: %s", e, exc_info=True)
+        finally:
+            ContextFilter.clear()
 
     def _recover_processing_tasks(self) -> None:
+        ContextFilter.set(operation="recovery")
         try:
             all_torrents = self.client.get_torrents(tag="processing")
 
             if not all_torrents:
-                logger.debug("→ No orphaned 'processing' tasks found at startup.")
+                logger.debug("No orphaned 'processing' tasks found at startup.")
                 return
 
             logger.info(
-                f"🔄 Recovering {len(all_torrents)} orphaned 'processing' tasks..."
+                "Recovering %d orphaned 'processing' tasks...", len(all_torrents)
             )
             self.client.remove_torrents_tag(
                 hashes=[t.hash for t in all_torrents], tag="processing"
@@ -123,26 +140,26 @@ class TorrentOrchestrator:
 
             if added_torrents:
                 self.client.add_torrents_tag(hashes=added_torrents, tag="added")
-                logger.info(f"🔄 Recovering {len(added_torrents)} 'added' tasks...")
+                logger.info("Recovered %d 'added' tasks", len(added_torrents))
             if completed_torrents:
                 self.client.add_torrents_tag(hashes=completed_torrents, tag="completed")
-                logger.info(
-                    f"🔄 Recovering {len(completed_torrents)} 'completed' tasks..."
-                )
+                logger.info("Recovered %d 'completed' tasks", len(completed_torrents))
 
-            logger.info("✅ Orphaned 'processing' tags cleaned up.")
+            logger.info("Orphaned 'processing' tags cleaned up.")
 
         except Exception as e:
-            logger.error(f"⚠️ Failed to recover processing tasks: {e}")
+            logger.error("Failed to recover processing tasks: %s", e)
+        finally:
+            ContextFilter.clear()
 
     def stop(self):
         self._stop_event.set()
 
     def run(self):
         logger.info(
-            f"🔄 TorrentOrchestrator started | "
-            f"Interval: {self.poll_interval}s | "
-            f"Stall timeout: {self.stall_timeout.total_seconds()/60}m"
+            "TorrentOrchestrator started | Interval: %ss | Stall timeout: %sm",
+            self.poll_interval,
+            self.stall_timeout.total_seconds() / 60,
         )
 
         self._recover_processing_tasks()

@@ -5,17 +5,23 @@ from pathlib import Path
 from qbittorrentapi import TorrentDictionary
 
 from handlers.base_handler import BaseHandler
+from logger import ContextFilter
 
 
 class CompletedHandler(BaseHandler):
     def handle(self, task: TorrentDictionary) -> None:
         short_hash = task.hash[:8]
-        self.logger.info(f"[COMPLETED] 🧹 Cleaning '{task.name}' ({short_hash})")
+        ContextFilter.set(
+            operation="completed",
+            torrent_hash=short_hash,
+            torrent_name=task.name,
+        )
+        self.logger.info("[COMPLETED] Cleaning '%s' (%s)", task.name, short_hash)
 
         content_path = Path(task.content_path)
         save_path = Path(task.save_path)
         if content_path == save_path:
-            self.logger.debug("    → Skipping: single-file torrent")
+            self.logger.debug("Skipping: single-file torrent")
             self._cleanup_processing_tag(task.hash)
             return
 
@@ -25,7 +31,7 @@ class CompletedHandler(BaseHandler):
 
         if content_path.is_file():
             self.logger.debug(
-                f"    → Skipping single-file torrent: {content_path.name}"
+                "Skipping single-file torrent: %s", content_path.name
             )
             self._cleanup_processing_tag(task.hash)
             return
@@ -35,16 +41,16 @@ class CompletedHandler(BaseHandler):
         deleted_count = self._clean_matching_items(content_path)
 
         if deleted_count > 0:
-            self.logger.info(f"    ✅ Cleaned {deleted_count} items in '{task.name}'")
+            self.logger.info("Cleaned %d items in '%s'", deleted_count, task.name)
         else:
-            self.logger.debug(f"    → No items matched deletion rules in '{task.name}'")
+            self.logger.debug("No items matched deletion rules in '%s'", task.name)
 
         self._cleanup_processing_tag(task.hash)
 
     def _ensure_content_path_exists(self, path: Path, torrent_name: str) -> bool:
         if not path.exists():
             self.logger.warning(
-                f"    ⚠️ Content path missing for '{torrent_name}': {path}"
+                "Content path missing for '%s': %s", torrent_name, path
             )
             return False
         return True
@@ -58,14 +64,14 @@ class CompletedHandler(BaseHandler):
                 try:
                     file_path.unlink()
                     self.logger.debug(
-                        f"      🗑️ Deleted unwanted file (priority=0): {f.name}"
+                        "Deleted unwanted file (priority=0): %s", f.name
                     )
                 except OSError as e:
-                    self.logger.error(f"      ❌ Failed to delete {file_path}: {e}")
+                    self.logger.error("Failed to delete %s: %s", file_path, e)
 
     def _clean_matching_items(self, content_path: Path) -> int:
         if not content_path.is_dir():
-            self.logger.warning(f"    ⚠️ Expected directory but got: {content_path}")
+            self.logger.warning("Expected directory but got: %s", content_path)
             return 0
 
         deleted_count = 0
@@ -81,25 +87,25 @@ class CompletedHandler(BaseHandler):
                         all_paths.append(Path(root) / d)
         except OSError as e:
             self.logger.error(
-                f"    ❌ Failed to scan directory tree {content_path}: {e}"
+                "Failed to scan directory tree %s: %s", content_path, e
             )
             return 0
 
         if all_paths:
-            self.logger.debug(f"    → Found {len(all_paths)} items matching rules")
+            self.logger.debug("Found %d items matching rules", len(all_paths))
 
         for path in all_paths:
             try:
                 if path.exists():
                     if path.is_dir():
                         shutil.rmtree(path)
-                        self.logger.debug(f"      🗑️ Deleted dir (rule match): {path}")
+                        self.logger.debug("Deleted dir (rule match): %s", path)
                     else:
                         path.unlink()
-                        self.logger.debug(f"      🗑️ Deleted file (rule match): {path}")
+                        self.logger.debug("Deleted file (rule match): %s", path)
                     deleted_count += 1
             except OSError as e:
-                self.logger.error(f"      ❌ Failed to delete {path}: {e}")
+                self.logger.error("Failed to delete %s: %s", path, e)
 
         try:
             for root, dirs, files in os.walk(content_path, topdown=False):
@@ -109,12 +115,12 @@ class CompletedHandler(BaseHandler):
                         if dir_path.exists() and not any(dir_path.iterdir()):
                             dir_path.rmdir()
                             self.logger.debug(
-                                f"      🗑️ Deleted empty dir (recursive): {dir_path}"
+                                "Deleted empty dir (recursive): %s", dir_path
                             )
                             deleted_count += 1
                     except OSError:
                         continue
         except OSError as e:
-            self.logger.error(f"    ❌ Error during recursive empty-dir cleanup: {e}")
+            self.logger.error("Error during recursive empty-dir cleanup: %s", e)
 
         return deleted_count

@@ -1,11 +1,12 @@
 import time
-import logging
 import requests
 import functools
 from typing import Tuple, Type, Callable, Any
 from qbittorrentapi import Client, APIError, TorrentFilesList, TorrentInfoList
 
-logger = logging.getLogger(__name__)
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def retry(
@@ -14,15 +15,6 @@ def retry(
     backoff: float = 1.0,
     exceptions: Tuple[Type[Exception], ...] = (Exception,),
 ):
-    """
-    指数退避重试装饰器。
-
-    Args:
-        max_attempts: 最大重试次数（含首次调用）
-        delay: 初始延迟秒数，上限30s
-        backoff: 延迟倍增因子（每次重试 delay *= backoff，上限30s）
-        exceptions: 需要重试的异常类型元组
-    """
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -33,13 +25,20 @@ def retry(
                 except exceptions as e:
                     if attempt == max_attempts:
                         logger.error(
-                            f"💥 {func.__qualname__} failed after {max_attempts} attempts: {e}"
+                            "%s failed after %d attempts: %s",
+                            func.__qualname__,
+                            max_attempts,
+                            e,
                         )
                         raise
                     else:
                         logger.warning(
-                            f"⚠️ {func.__qualname__} failed (attempt {attempt}/{max_attempts}): {e}. "
-                            f"Retrying in {current_delay:.1f}s..."
+                            "%s failed (attempt %d/%d): %s. Retrying in %.1fs...",
+                            func.__qualname__,
+                            attempt,
+                            max_attempts,
+                            e,
+                            current_delay,
                         )
                         time.sleep(current_delay)
                         current_delay = min(current_delay * backoff, 30)

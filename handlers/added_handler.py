@@ -1,22 +1,28 @@
 from qbittorrentapi import TorrentDictionary
 
 from handlers.base_handler import BaseHandler
+from logger import ContextFilter
 
 
 class AddedHandler(BaseHandler):
     def handle(self, task: TorrentDictionary) -> None:
         short_hash = task.hash[:8]
-        self.logger.info(f"[ADDED] 📥 Processing '{task.name}' ({short_hash})")
+        ContextFilter.set(
+            operation="added",
+            torrent_hash=short_hash,
+            torrent_name=task.name,
+        )
+        self.logger.info("[ADDED] Processing '%s' (%s)", task.name, short_hash)
 
         files = task.files
         if not files or len(files) <= 1:
             self.logger.debug(
-                "    → Skipping: empty, single-file, or metadata-only torrent"
+                "Skipping: empty, single-file, or metadata-only torrent"
             )
             self._cleanup_processing_tag(task.hash)
             return
 
-        self.logger.debug(f"    → Inspecting {len(files)} files against skip rules...")
+        self.logger.debug("Inspecting %d files against skip rules...", len(files))
 
         file_id_to_name = {f.id: f.name for f in files}
 
@@ -25,21 +31,23 @@ class AddedHandler(BaseHandler):
         ]
 
         if not files_to_disable:
-            self.logger.debug(f"    → No files matched skip rules in '{task.name}'")
+            self.logger.debug("No files matched skip rules in '%s'", task.name)
             self._cleanup_processing_tag(task.hash)
             return
 
         try:
             self.client.set_file_no_download(hash=task.hash, file_ids=files_to_disable)
             self.logger.info(
-                f"    ✅ Skipped {len(files_to_disable)}/{len(files)} files "
-                f"for '{task.name}'"
+                "Skipped %d/%d files for '%s'",
+                len(files_to_disable),
+                len(files),
+                task.name,
             )
             for fid in files_to_disable:
                 self.logger.debug(
-                    f"      - Disabled: {file_id_to_name.get(fid, '<?>')}"
+                    "Disabled: %s", file_id_to_name.get(fid, "<? >")
                 )
         except Exception as e:
-            self.logger.error(f"    ❌ Failed to disable files for {short_hash}: {e}")
+            self.logger.error("Failed to disable files for %s: %s", short_hash, e)
         finally:
             self._cleanup_processing_tag(task.hash)
