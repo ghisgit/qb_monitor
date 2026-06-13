@@ -6,7 +6,7 @@ qBittorrent 自动化监控与清理工具。基于标签驱动的事件处理�
 
 - **添加时自动跳过文件** — 种子添加后，根据正则规则自动将匹配文件设为不下载（如样本图、NFO、字幕等）
 - **完成后自动清理** — 种子下载完成后，自动删除未下载的文件（priority=0）及匹配清理规则的文件和空目录
-- **卡顿种子降级** — 当活跃下载数超过阈值时，自动将长时间卡在元数据获取的种子优先级降至最低
+- **卡顿种子降级** — 统一监控 `metaDL`/`stalledDL`/`downloading`/`forcedDL` 四种状态，活跃下载数超阈值时自动将长时间卡顿种子降至队列底部
 - **异常恢复** — 启动时自动恢复上次异常退出后卡在 `processing` 状态的种子，避免任务丢失
 - **优雅退出** — Ctrl+C 时等待队列中任务完成后再退出
 - **高可靠 API 调用** — 所有 qBittorrent API 调用均带指数退避重试机制
@@ -30,7 +30,7 @@ qBittorrent 自动化监控与清理工具。基于标签驱动的事件处理�
 
 ## 工作流程
 
-```
+```text
 qBittorrent 添加种子
         │
         ▼
@@ -115,6 +115,7 @@ qbittorrent:
 processor:
   poll_interval_seconds: 30
   stall_timeout_minutes: 30
+  demotion_threshold: 30
   max_worker_threads: 3
 
 logfile: "logs/qb_auto.log"
@@ -131,7 +132,8 @@ debug_mode: false
 | `qbittorrent.username`            | str       | Web UI 用户名                                             |
 | `qbittorrent.password`            | str       | Web UI 密码                                               |
 | `processor.poll_interval_seconds` | int       | 轮询间隔（秒）                                            |
-| `processor.stall_timeout_minutes` | int       | 卡顿超时（分钟），超过此时间的 metaDL 种子将被降级        |
+| `processor.stall_timeout_minutes` | int       | 卡顿超时（分钟），超过此时间种子将被降级                  |
+| `processor.demotion_threshold`    | int       | 降级触发阈值，活跃下载数超过此值才开始降级                |
 | `processor.max_worker_threads`    | int       | 工作线程数                                                |
 | `logfile`                         | str       | 日志文件路径                                              |
 | `debug_mode`                      | bool      | 是否开启调试日志                                          |
@@ -182,7 +184,7 @@ python main.py
 
 ## 项目结构
 
-```
+```text
 qb_monitor/
 ├── main.py                  # 入口：配置加载、日志初始化、线程启动
 ├── client.py                # qBittorrent API 客户端封装（含重试装饰器）
@@ -191,7 +193,8 @@ qb_monitor/
 ├── handlers/
 │   ├── base_handler.py      # 处理器基类：规则匹配、标签清理
 │   ├── added_handler.py     # 添加处理器：跳过匹配规则的文件
-│   └── completed_handler.py # 完成处理器：删除无用文件和空目录
+│   ├── completed_handler.py # 完成处理器：删除无用文件和空目录
+│   └── monitor_handler.py   # 监控处理器：追踪卡顿种子，超时降级
 ├── scripts/
 │   ├── added_torrent.sh     # qBittorrent 添加种子时执行的标签脚本
 │   └── completed_torrent.sh # qBittorrent 完成种子时执行的标签脚本
@@ -204,15 +207,18 @@ qb_monitor/
 
 ### 核心模块说明
 
-**Orchestrator** — 生产者角色，定时轮询 qBittorrent 中带有 `added`/`completed` 标签的种子，将其放入任务队列。同时监控卡顿种子，在活跃下载数超过 200 时将超时的 metaDL 种子降级。
+**Orchestrator** — 生产者角色，定时轮询 qBittorrent 中所有种子，按标签分类后放入任务队列。同时收集活跃下载种子为监控批次，分发至 MonitorHandler。
 
-**Handler** — 消费者角色，工作线程从队列中取出任务并分发到对应处理器。每个处理器处理完毕后自动清理 `processing` 标签。
+**AddedHandler / CompletedHandler** — 消费者角色，工作线程从队列取出单个种子，执行文件跳过或清理操作，完成后自动清除 `processing` 标签。
+
+**MonitorHandler** — 消费者角色，工作线程从队列取出监控批次，统一追踪 `metaDL`/`stalledDL`/`downloading`/`forcedDL` 四类种子的卡顿时间。活跃下载数超过 `demotion_threshold` 且卡顿超过 `stall_timeout_minutes` 时，调用 API 降至队列底部。使用自有时间戳，不依赖 qBittorrent 内部计数器。
 
 **标签状态机**：
 
-```
+```text
 added → processing → (处理完成，标签清除)
 completed → processing → (处理完成，标签清除)
+monitoring: 批次任务，不操作种子标签，仅追踪与降级
 ```
 
 ## 扩展 Handler
