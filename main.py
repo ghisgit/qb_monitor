@@ -7,6 +7,7 @@ from client import QBittorrentClient
 from orchestrator import TorrentOrchestrator
 from handlers.added_handler import AddedHandler
 from handlers.completed_handler import CompletedHandler
+from handlers.monitor_handler import MonitorHandler
 from logger import setup_logging, get_logger, ContextFilter
 
 CONFIG_SCHEMA = {
@@ -14,6 +15,7 @@ CONFIG_SCHEMA = {
     "processor": [
         "poll_interval_seconds",
         "stall_timeout_minutes",
+        "demotion_threshold",
         "max_worker_threads",
     ],
     "rules": ["added", "completed"],
@@ -75,9 +77,16 @@ def main():
         task_queue=task_queue,
         poll_interval_seconds=data["processor"]["poll_interval_seconds"],
         stall_timeout_minutes=data["processor"]["stall_timeout_minutes"],
+        demotion_threshold=data["processor"]["demotion_threshold"],
+    )
+    monitor_handler = MonitorHandler(
+        client=client,
+        stall_timeout_seconds=data["processor"]["stall_timeout_minutes"] * 60,
+        demotion_threshold=data["processor"]["demotion_threshold"],
     )
     orchestrator.register_handler("added", added_handler.handle)
     orchestrator.register_handler("completed", completed_handler.handle)
+    orchestrator.register_handler("monitoring", monitor_handler.handle)
 
     stop_event = threading.Event()
 
@@ -88,20 +97,26 @@ def main():
             except queue.Empty:
                 continue
             try:
-                ContextFilter.set(
-                    operation="task_dispatch",
-                    torrent_hash=task.hash[:8],
-                    torrent_name=task.name,
-                )
+                if isinstance(task, dict) and task.get("type") == "monitoring":
+                    ContextFilter.set(operation="monitoring")
+                else:
+                    ContextFilter.set(
+                        operation="task_dispatch",
+                        torrent_hash=task.hash[:8],
+                        torrent_name=task.name,
+                    )
                 orchestrator.dispatch(task)
             except Exception as e:
-                logger.error(
-                    "Handler error for %s (%s): %s",
-                    task.hash[:8],
-                    task.name,
-                    e,
-                    exc_info=True,
-                )
+                if isinstance(task, dict):
+                    logger.error("MonitorHandler error: %s", e, exc_info=True)
+                else:
+                    logger.error(
+                        "Handler error for %s (%s): %s",
+                        task.hash[:8],
+                        task.name,
+                        e,
+                        exc_info=True,
+                    )
             finally:
                 ContextFilter.clear()
                 task_queue.task_done()

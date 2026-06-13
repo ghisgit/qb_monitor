@@ -1,5 +1,6 @@
 import queue
 import threading
+import time
 import uuid
 from datetime import timedelta
 from typing import Callable
@@ -19,11 +20,13 @@ class TorrentOrchestrator:
         task_queue: queue.Queue,
         poll_interval_seconds: int = 30,
         stall_timeout_minutes: int = 30,
+        demotion_threshold: int = 30,
     ):
         self.client = client
         self.task_queue = task_queue
         self.poll_interval = poll_interval_seconds
         self.stall_timeout = timedelta(minutes=stall_timeout_minutes)
+        self.demotion_threshold = demotion_threshold
         self._dispatcher: dict[str, Callable] = {}
         self._stop_event = threading.Event()
 
@@ -31,6 +34,9 @@ class TorrentOrchestrator:
         self._dispatcher[tag] = handler_fn
 
     def dispatch(self, task):
+        if isinstance(task, dict) and task.get("type") == "monitoring":
+            self._dispatcher["monitoring"](task)
+            return
         for tag, handler_fn in self._dispatcher.items():
             if tag in task.tags:
                 ContextFilter.set(
@@ -45,30 +51,42 @@ class TorrentOrchestrator:
         ContextFilter.set(request_id=cycle_id, operation="poll_cycle")
 
         try:
+            logger.debug("Cycle %s: fetching torrents...", cycle_id)
             all_torrents: TorrentInfoList = self.client.get_torrents()
+            logger.debug("Cycle %s: fetched %d torrents", cycle_id, len(all_torrents))
 
             added_torrents: list[TorrentDictionary] = []
             completed_torrents: list[TorrentDictionary] = []
-            stalled_torrents: list[TorrentDictionary] = []
+            monitoring_torrents: list[TorrentDictionary] = []
             downloading_count = 0
+            now = time.time()
 
             for t in all_torrents:
                 state = t.state
                 is_metadata = t.has_metadata
                 tags = t.tags
 
+                # Count all downloading-type and collect for monitoring
+                if state in ("downloading", "metaDL", "stalledDL", "forcedDL", "queuedDL"):
+                    downloading_count += 1
+                    if state != "queuedDL" and t.progress < 0.95:
+                        monitoring_torrents.append(t)
+
+                # Skip torrents without metadata or currently being processed
                 if not is_metadata or "processing" in tags:
-                    if state == "metaDL":
-                        stalled_torrents.append(t)
                     continue
 
+                # Tag-based classification for handler processing
                 if "added" in tags:
                     added_torrents.append(t)
                 elif "completed" in tags:
                     completed_torrents.append(t)
 
-                if state in ("downloading", "metaDL", "stalledDL", "forcedDL"):
-                    downloading_count += 1
+            logger.debug(
+                "Cycle summary: total=%d | added=%d | completed=%d | monitoring=%d | downloading_count=%d",
+                len(all_torrents), len(added_torrents), len(completed_torrents),
+                len(monitoring_torrents), downloading_count,
+            )
 
             if added_torrents:
                 added_hashes = [t.hash for t in added_torrents]
@@ -97,16 +115,19 @@ class TorrentOrchestrator:
                     len(completed_torrents),
                 )
 
-            if stalled_torrents and downloading_count > 200:
-                hashes_to_demote = []
-
-                for t in stalled_torrents:
-                    if timedelta(seconds=t.time_active) > self.stall_timeout:
-                        hashes_to_demote.append(t.hash)
-
-                if hashes_to_demote:
-                    self.client.move_to_bottom(hashes=hashes_to_demote)
-                    logger.info("Demoted %d stalled torrents", len(hashes_to_demote))
+            if monitoring_torrents:
+                logger.debug(
+                    "Dispatching monitoring batch: %d torrents | downloading_count=%d",
+                    len(monitoring_torrents), downloading_count,
+                )
+                self.task_queue.put(
+                    {
+                        "type": "monitoring",
+                        "torrents": monitoring_torrents,
+                        "downloading_count": downloading_count,
+                        "now": now,
+                    }
+                )
 
         except Exception as e:
             logger.error("Error in orchestration cycle: %s", e, exc_info=True)
@@ -157,13 +178,15 @@ class TorrentOrchestrator:
 
     def run(self):
         logger.info(
-            "TorrentOrchestrator started | Interval: %ss | Stall timeout: %sm",
+            "TorrentOrchestrator started | Interval: %ss | Stall timeout: %sm | Demotion threshold: %d",
             self.poll_interval,
             self.stall_timeout.total_seconds() / 60,
+            self.demotion_threshold,
         )
 
         self._recover_processing_tasks()
 
+        logger.debug("Entering main loop | poll_interval=%ds", self.poll_interval)
         while not self._stop_event.is_set():
             self._process_torrents()
             self._stop_event.wait(timeout=self.poll_interval)

@@ -15,6 +15,7 @@ qbittorrent:
 processor:
   poll_interval_seconds: 30 # 轮询间隔（秒），检查种子状态的频率
   stall_timeout_minutes: 30 # 停滞超时（分钟），超过此时间的元数据下载种子将被降级
+  demotion_threshold: 30 # 降级触发阈值，当下载中种子数超过此值时开始降级停滞/迟滞种子
   max_worker_threads: 3 # 最大工作线程数，并发处理种子的数量
 
 # 日志系统配置
