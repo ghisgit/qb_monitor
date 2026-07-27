@@ -11,11 +11,23 @@ qbittorrent:
   username: "admin" # WebUI 用户名
   password: "adminadmin" # WebUI 密码
 
+# 客户端高级配置（可选，省略则使用默认值）
+client:
+  connect_timeout: 5 # 连接超时（秒）
+  read_timeout: 30 # 读取超时（秒）
+  retry: # API 调用重试策略
+    max_attempts: 3 # 最大重试次数
+    delay: 1.0 # 初始重试延迟（秒）
+    backoff: 1.0 # 延迟倍增因子
+    cap: 30.0 # 最大延迟上限（秒）
+  circuit_breaker: # 熔断器配置
+    failure_threshold: 5 # 连续失败次数阈值，超过后熔断
+    recovery_timeout: 30.0 # 熔断后恢复等待时间（秒）
+
 # 处理器运行参数
 processor:
   poll_interval_seconds: 30 # 轮询间隔（秒），检查种子状态的频率
-  stall_timeout_minutes: 30 # 停滞超时（分钟），超过此时间的元数据下载种子将被降级
-  demotion_threshold: 30 # 降级触发阈值，当下载中种子数超过此值时开始降级停滞/迟滞种子
+  stall_timeout_hours: 1 # 停滞超时（小时），超过此时间的下载种子将被降级
   max_worker_threads: 3 # 最大工作线程数，并发处理种子的数量
 
 # 日志系统配置
@@ -25,7 +37,7 @@ logging:
   environment: "development" # 运行环境: development / testing / production
   json_format: false # true=JSON结构化输出, false=可读文本格式
   rotation: # 日志轮转策略
-    max_bytes: 10485760 # 单个日志文件最大大小（字节），默认10MB
+    max_file_size_mb: 10 # 单个日志文件最大大小（MB）
     backup_count: 30 # 保留的备份文件数量
     retention_days: 30 # 日志文件保留天数，超期自动清理
     when: "midnight" # 按时间轮转: midnight=每日, H=每小时, D=每天

@@ -144,7 +144,8 @@ def setup_logging(config):
     json_format = log_cfg.get("json_format", environment == "production")
 
     rotation = log_cfg.get("rotation", {})
-    max_bytes = rotation.get("max_bytes", 10 * 1024 * 1024)
+    max_file_size_mb = rotation.get("max_file_size_mb", 10)
+    max_file_size = max_file_size_mb * 1024 * 1024
     backup_count = rotation.get("backup_count", 30)
     retention_days = rotation.get("retention_days", 30)
     when = rotation.get("when", "midnight")
@@ -169,7 +170,7 @@ def setup_logging(config):
 
     file_handler = SizeTimeRotatingFileHandler(
         filename=logfile,
-        maxBytes=max_bytes,
+        maxBytes=max_file_size,
         when=when,
         backupCount=backup_count,
         encoding="utf-8",

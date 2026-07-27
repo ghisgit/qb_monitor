@@ -32,7 +32,7 @@ class AddedHandler(BaseHandler):
             return
 
         try:
-            self.client.set_file_no_download(hash=task.hash, file_ids=files_to_disable)
+            self.client.set_file_no_download(torrent_hash=task.hash, file_ids=files_to_disable)
             self.logger.info(
                 "Skipped %d/%d files for '%s'",
                 len(files_to_disable),

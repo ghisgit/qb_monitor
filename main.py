@@ -1,9 +1,11 @@
 import queue
 import threading
+import time
 
 import yaml
 from qbittorrentapi import TorrentDictionary
 
+from _breaker import CircuitBreakerConfig, RetryConfig
 from client import QBittorrentClient
 from handlers.added_handler import AddedHandler
 from handlers.completed_handler import CompletedHandler
@@ -12,12 +14,11 @@ from logger import ContextFilter, get_logger, setup_logging
 from models import MatchRule
 from orchestrator import TorrentOrchestrator
 
-CONFIG_SCHEMA = {
+MANDATORY_SECTIONS = {
     "qbittorrent": ["host", "username", "password"],
     "processor": [
         "poll_interval_seconds",
-        "stall_timeout_minutes",
-        "demotion_threshold",
+        "stall_timeout_hours",
         "max_worker_threads",
     ],
     "rules": ["added", "completed"],
@@ -35,7 +36,7 @@ def load_config(path: str = "config.yaml") -> dict:
 
 def validate_config(data: dict):
     missing = []
-    for section, keys in CONFIG_SCHEMA.items():
+    for section, keys in MANDATORY_SECTIONS.items():
         if section not in data:
             missing.append(section)
             continue
@@ -61,10 +62,17 @@ def main():
 
     logger = get_logger("qb_monitor")
 
+    client_cfg = data.get("client", {})
     client = QBittorrentClient(
         host=data["qbittorrent"]["host"],
         username=data["qbittorrent"]["username"],
         password=data["qbittorrent"]["password"],
+        connect_timeout=client_cfg.get("connect_timeout", 5.0),
+        read_timeout=client_cfg.get("read_timeout", 30.0),
+        retry_cfg=RetryConfig(**client_cfg.get("retry", {})) if client_cfg.get("retry") else None,
+        breaker_cfg=CircuitBreakerConfig(**client_cfg.get("circuit_breaker", {}))
+        if client_cfg.get("circuit_breaker")
+        else None,
     )
 
     task_queue = queue.Queue()
@@ -76,13 +84,11 @@ def main():
         client=client,
         task_queue=task_queue,
         poll_interval_seconds=data["processor"]["poll_interval_seconds"],
-        stall_timeout_minutes=data["processor"]["stall_timeout_minutes"],
-        demotion_threshold=data["processor"]["demotion_threshold"],
+        stall_timeout_hours=data["processor"]["stall_timeout_hours"],
     )
     monitor_handler = MonitorHandler(
         client=client,
-        stall_timeout_seconds=data["processor"]["stall_timeout_minutes"] * 60,
-        demotion_threshold=data["processor"]["demotion_threshold"],
+        stall_timeout_seconds=data["processor"]["stall_timeout_hours"] * 3600,
     )
     orchestrator.register_handler("added", added_handler.handle)
     orchestrator.register_handler("completed", completed_handler.handle)
@@ -132,13 +138,24 @@ def main():
 
     logger.info("🚀 All services started. Press Ctrl+C to exit.")
     try:
-        stop_event.wait()
+        while not stop_event.is_set():
+            stop_event.wait(timeout=5.0)
+            for t in worker_threads:
+                if not t.is_alive():
+                    logger.error("Worker thread %s died unexpectedly", t.name)
+            if not orch_thread.is_alive():
+                logger.error("Orchestrator thread died unexpectedly")
     except KeyboardInterrupt:
         logger.info("🛑 Shutting down...")
         orchestrator.stop()
         stop_event.set()
-        task_queue.join()
-        logger.info("✅ All tasks completed. Bye!")
+        deadline = time.monotonic() + 30
+        while task_queue.unfinished_tasks and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if task_queue.unfinished_tasks:
+            logger.warning("Shutdown timed out with %d tasks remaining", task_queue.unfinished_tasks)
+        else:
+            logger.info("✅ All tasks completed. Bye!")
 
 
 if __name__ == "__main__":

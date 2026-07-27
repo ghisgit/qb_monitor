@@ -114,12 +114,13 @@ qbittorrent:
 
 processor:
   poll_interval_seconds: 30
-  stall_timeout_minutes: 30
-  demotion_threshold: 30
+  stall_timeout_hours: 1
   max_worker_threads: 3
 
-logfile: "logs/qb_auto.log"
-debug_mode: false
+logging:
+  level: "DEBUG"
+  logfile: "logs/qb_auto.log"
+  json: false
 ```
 
 ### 3. 配置项说明
@@ -132,11 +133,11 @@ debug_mode: false
 | `qbittorrent.username`            | str       | Web UI 用户名                                             |
 | `qbittorrent.password`            | str       | Web UI 密码                                               |
 | `processor.poll_interval_seconds` | int       | 轮询间隔（秒）                                            |
-| `processor.stall_timeout_minutes` | int       | 卡顿超时（分钟），超过此时间种子将被降级                  |
-| `processor.demotion_threshold`    | int       | 降级触发阈值，活跃下载数超过此值才开始降级                |
+| `processor.stall_timeout_hours` | float     | 卡顿超时（小时），超过此时间种子将被降级                  |
 | `processor.max_worker_threads`    | int       | 工作线程数                                                |
-| `logfile`                         | str       | 日志文件路径                                              |
-| `debug_mode`                      | bool      | 是否开启调试日志                                          |
+| `logging.level`                   | str       | 日志级别 (`DEBUG` / `INFO` / `WARNING` / `ERROR`)        |
+| `logging.logfile`                 | str       | 日志文件路径                                              |
+| `logging.json`                    | bool      | 是否使用 JSON 格式输出日志                                 |
 
 ### 4. 配置 qBittorrent 自动标签
 
@@ -180,7 +181,7 @@ uv run python main.py
 | 启动     | `uv run python main.py`                |
 | 停止     | `Ctrl+C`（优雅退出，等待当前任务完成） |
 | 查看日志 | `tail -f logs/qb_auto.log`             |
-| 调试模式 | 设置 `debug_mode: true`                |
+| 调试模式 | 设置 `logging.level: "DEBUG"`                |
 
 ## 项目结构
 
@@ -211,7 +212,7 @@ qb_monitor/
 
 **AddedHandler / CompletedHandler** — 消费者角色，工作线程从队列取出单个种子，执行文件跳过或清理操作，完成后自动清除 `processing` 标签。
 
-**MonitorHandler** — 消费者角色，工作线程从队列取出监控批次，统一追踪 `metaDL`/`stalledDL`/`downloading`/`forcedDL` 四类种子的卡顿时间。活跃下载数超过 `demotion_threshold` 且卡顿超过 `stall_timeout_minutes` 时，调用 API 降至队列底部。使用自有时间戳，不依赖 qBittorrent 内部计数器。
+**MonitorHandler** — 消费者角色，工作线程从队列取出监控批次，统一追踪 `metaDL`/`stalledDL`/`downloading`/`forcedDL` 四类种子的卡顿时间。降级阈值 `max_active_downloads` 来自 qBittorrent 偏好设置，卡顿超过 `stall_timeout_hours` 时调用 API 降至队列底部。使用自有时间戳，不依赖 qBittorrent 内部计数器。
 
 **标签状态机**：
 
@@ -256,9 +257,9 @@ orchestrator.register_handler("custom", custom_handler.handle)
 ### 代码规范
 
 - 遵循 PEP 8 代码风格
-- 使用类型注解（Python 3.12+ 语法，如 `str | None`、`list[int]`）
+- 使用类型注解（Python 3.14+ 语法，如 `str | None`、`list[int]`）
 - 类和函数使用 docstring 说明用途
-- 日志使用 `logging.getLogger(__name__)` 获取 logger
+- 日志使用 `get_logger(__name__)` 获取 logger
 
 ### 提交流程
 

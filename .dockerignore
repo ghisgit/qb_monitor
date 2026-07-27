@@ -34,7 +34,8 @@ Thumbs.db
 .gitignore
 .gitattributes
 
-# 文档
+# 开发文档
+AGENTS.md
 README.md
 
 # Docker 自身
@@ -42,7 +43,9 @@ Dockerfile
 .dockerignore
 docker-compose*.yml
 
-# 测试
+# 测试与缓存
 tests/
+.pytest_cache/
+.ruff_cache/
 test_*.py
 *_test.py

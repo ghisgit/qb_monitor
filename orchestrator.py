@@ -19,14 +19,12 @@ class TorrentOrchestrator:
         client: QBittorrentClient,
         task_queue: queue.Queue,
         poll_interval_seconds: int = 30,
-        stall_timeout_minutes: int = 30,
-        demotion_threshold: int = 30,
+        stall_timeout_hours: float = 1.0,
     ):
         self.client = client
         self.task_queue = task_queue
         self.poll_interval = poll_interval_seconds
-        self.stall_timeout = timedelta(minutes=stall_timeout_minutes)
-        self.demotion_threshold = demotion_threshold
+        self.stall_timeout = timedelta(hours=stall_timeout_hours)
         self._dispatcher: dict[str, Callable] = {}
         self._stop_event = threading.Event()
 
@@ -65,7 +63,7 @@ class TorrentOrchestrator:
             for t in all_torrents:
                 state = t.state
                 is_metadata = t.has_metadata
-                tags = t.tags
+                tag_set = set(t.tags.split(",")) if t.tags else set()
 
                 # Count all downloading-type and collect for monitoring
                 if state in ("downloading", "metaDL", "stalledDL", "forcedDL", "queuedDL"):
@@ -74,13 +72,13 @@ class TorrentOrchestrator:
                         monitoring_torrents.append(t)
 
                 # Skip torrents without metadata or currently being processed
-                if not is_metadata or "processing" in tags:
+                if not is_metadata or "processing" in tag_set:
                     continue
 
                 # Tag-based classification for handler processing
-                if "added" in tags:
+                if "added" in tag_set:
                     added_torrents.append(t)
-                elif "completed" in tags:
+                elif "completed" in tag_set:
                     completed_torrents.append(t)
 
             logger.debug(
@@ -116,16 +114,19 @@ class TorrentOrchestrator:
                 )
 
             if monitoring_torrents:
+                demotion_threshold = self.client.get_max_active_downloads()
                 logger.debug(
-                    "Dispatching monitoring batch: %d torrents | downloading_count=%d",
+                    "Dispatching monitoring batch: %d torrents | downloading_count=%d | demotion_threshold=%d",
                     len(monitoring_torrents),
                     downloading_count,
+                    demotion_threshold,
                 )
                 self.task_queue.put(
                     {
                         "type": "monitoring",
                         "torrents": monitoring_torrents,
                         "downloading_count": downloading_count,
+                        "demotion_threshold": demotion_threshold,
                         "now": now,
                     }
                 )
@@ -175,10 +176,9 @@ class TorrentOrchestrator:
 
     def run(self):
         logger.info(
-            "TorrentOrchestrator started | Interval: %ss | Stall timeout: %sm | Demotion threshold: %d",
+            "TorrentOrchestrator started | Interval: %ds | Stall timeout: %sh",
             self.poll_interval,
-            self.stall_timeout.total_seconds() / 60,
-            self.demotion_threshold,
+            self.stall_timeout.total_seconds() / 3600,
         )
 
         self._recover_processing_tasks()

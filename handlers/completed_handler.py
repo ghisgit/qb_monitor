@@ -71,46 +71,34 @@ class CompletedHandler(BaseHandler):
         deleted_count = 0
 
         try:
-            all_paths = []
             for root, dirs, files in os.walk(content_path, topdown=False):
                 for f in files:
+                    fp = Path(root) / f
                     if self._match_rule(f):
-                        all_paths.append(Path(root) / f)
+                        try:
+                            fp.unlink()
+                            self.logger.debug("Deleted file (rule match): %s", fp)
+                            deleted_count += 1
+                        except OSError as e:
+                            self.logger.error("Failed to delete %s: %s", fp, e)
                 for d in dirs:
+                    dp = Path(root) / d
                     if self._match_rule(d):
-                        all_paths.append(Path(root) / d)
+                        try:
+                            shutil.rmtree(dp)
+                            self.logger.debug("Deleted dir (rule match): %s", dp)
+                            deleted_count += 1
+                        except OSError as e:
+                            self.logger.error("Failed to delete %s: %s", dp, e)
+                    else:
+                        try:
+                            if dp.exists() and not any(dp.iterdir()):
+                                dp.rmdir()
+                                self.logger.debug("Deleted empty dir (recursive): %s", dp)
+                                deleted_count += 1
+                        except OSError:
+                            continue
         except OSError as e:
             self.logger.error("Failed to scan directory tree %s: %s", content_path, e)
-            return 0
-
-        if all_paths:
-            self.logger.debug("Found %d items matching rules", len(all_paths))
-
-        for path in all_paths:
-            try:
-                if path.exists():
-                    if path.is_dir():
-                        shutil.rmtree(path)
-                        self.logger.debug("Deleted dir (rule match): %s", path)
-                    else:
-                        path.unlink()
-                        self.logger.debug("Deleted file (rule match): %s", path)
-                    deleted_count += 1
-            except OSError as e:
-                self.logger.error("Failed to delete %s: %s", path, e)
-
-        try:
-            for root, dirs, files in os.walk(content_path, topdown=False):
-                for d in dirs:
-                    dir_path = Path(root) / d
-                    try:
-                        if dir_path.exists() and not any(dir_path.iterdir()):
-                            dir_path.rmdir()
-                            self.logger.debug("Deleted empty dir (recursive): %s", dir_path)
-                            deleted_count += 1
-                    except OSError:
-                        continue
-        except OSError as e:
-            self.logger.error("Error during recursive empty-dir cleanup: %s", e)
 
         return deleted_count

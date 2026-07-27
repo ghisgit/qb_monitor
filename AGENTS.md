@@ -41,11 +41,11 @@ Run order: `ruff check .` → `ruff format . --check` → `pyright` → `pytest`
 
 ## Quirks / gotchas
 
-- No test directory exists yet; `tests/` is in `.gitignore`.
+- 32 tests across 4 test files in `tests/`; run with `uv run pytest`.
 - Python requirement: `>=3.14` (per `pyproject.toml` and `.python-version`).
 - Ruff: `line-length = 120`, `quote-style = "double"`, target `py314`.
 - Pyright: `venvPath = "."`, `venv = ".venv"`, `typeCheckingMode = "basic"`.
 - Logging has a `FATAL` level (value 60), custom `QBLogger`, JSON-structured format in production, thread-local `ContextFilter` for contextual fields, and `SensitiveDataFilter` for secrets.
 - Shell scripts in `scripts/` are **not** run inside Docker; they run on the qBittorrent host as external program hooks.
 - Docker uses `python:3.14-slim-bookworm` with uv; run `docker build -t qb-monitor .` to build.
-- All qBittorrent API calls go through `@retry` decorator (exponential backoff, up to 30s cap).
+- All qBittorrent API calls go through `_request()` with retry logic (exponential backoff, up to 30s cap) and circuit breaker protection.
