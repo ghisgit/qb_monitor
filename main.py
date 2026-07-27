@@ -1,14 +1,16 @@
-import threading
 import queue
-import yaml
+import threading
 
-from models import MatchRule
+import yaml
+from qbittorrentapi import TorrentDictionary
+
 from client import QBittorrentClient
-from orchestrator import TorrentOrchestrator
 from handlers.added_handler import AddedHandler
 from handlers.completed_handler import CompletedHandler
 from handlers.monitor_handler import MonitorHandler
-from logger import setup_logging, get_logger, ContextFilter
+from logger import ContextFilter, get_logger, setup_logging
+from models import MatchRule
+from orchestrator import TorrentOrchestrator
 
 CONFIG_SCHEMA = {
     "qbittorrent": ["host", "username", "password"],
@@ -68,9 +70,7 @@ def main():
     task_queue = queue.Queue()
 
     added_handler = AddedHandler(client, [MatchRule(p) for p in data["rules"]["added"]])
-    completed_handler = CompletedHandler(
-        client, [MatchRule(p) for p in data["rules"]["completed"]]
-    )
+    completed_handler = CompletedHandler(client, [MatchRule(p) for p in data["rules"]["completed"]])
 
     orchestrator = TorrentOrchestrator(
         client=client,
@@ -99,7 +99,7 @@ def main():
             try:
                 if isinstance(task, dict) and task.get("type") == "monitoring":
                     ContextFilter.set(operation="monitoring")
-                else:
+                elif isinstance(task, TorrentDictionary):
                     ContextFilter.set(
                         operation="task_dispatch",
                         torrent_hash=task.hash[:8],
@@ -127,9 +127,7 @@ def main():
         t.start()
         worker_threads.append(t)
 
-    orch_thread = threading.Thread(
-        target=orchestrator.run, daemon=True, name="Orchestrator"
-    )
+    orch_thread = threading.Thread(target=orchestrator.run, daemon=True, name="Orchestrator")
     orch_thread.start()
 
     logger.info("🚀 All services started. Press Ctrl+C to exit.")

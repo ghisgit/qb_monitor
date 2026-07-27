@@ -2,13 +2,13 @@ import queue
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from datetime import timedelta
-from typing import Callable
 
-from qbittorrentapi import TorrentInfoList, TorrentDictionary
+from qbittorrentapi import TorrentDictionary, TorrentInfoList
 
 from client import QBittorrentClient
-from logger import get_logger, ContextFilter
+from logger import ContextFilter, get_logger
 
 logger = get_logger(__name__)
 
@@ -37,11 +37,12 @@ class TorrentOrchestrator:
         if isinstance(task, dict) and task.get("type") == "monitoring":
             self._dispatcher["monitoring"](task)
             return
+        if not isinstance(task, TorrentDictionary):
+            logger.warning("Unknown task type: %s", type(task).__name__)
+            return
         for tag, handler_fn in self._dispatcher.items():
             if tag in task.tags:
-                ContextFilter.set(
-                    operation=tag, torrent_hash=task.hash[:8], torrent_name=task.name
-                )
+                ContextFilter.set(operation=tag, torrent_hash=task.hash[:8], torrent_name=task.name)
                 handler_fn(task)
                 return
         logger.warning("No handler for tags: %s", task.tags)
@@ -84,8 +85,11 @@ class TorrentOrchestrator:
 
             logger.debug(
                 "Cycle summary: total=%d | added=%d | completed=%d | monitoring=%d | downloading_count=%d",
-                len(all_torrents), len(added_torrents), len(completed_torrents),
-                len(monitoring_torrents), downloading_count,
+                len(all_torrents),
+                len(added_torrents),
+                len(completed_torrents),
+                len(monitoring_torrents),
+                downloading_count,
             )
 
             if added_torrents:
@@ -96,9 +100,7 @@ class TorrentOrchestrator:
                     self.task_queue.put(t)
 
                 self.client.remove_torrents_tag(hashes=added_hashes, tag="added")
-                logger.info(
-                    "Queued %d added torrents for processing", len(added_torrents)
-                )
+                logger.info("Queued %d added torrents for processing", len(added_torrents))
 
             if completed_torrents:
                 completed_hashes = [t.hash for t in completed_torrents]
@@ -107,9 +109,7 @@ class TorrentOrchestrator:
                 for t in completed_torrents:
                     self.task_queue.put(t)
 
-                self.client.remove_torrents_tag(
-                    hashes=completed_hashes, tag="completed"
-                )
+                self.client.remove_torrents_tag(hashes=completed_hashes, tag="completed")
                 logger.info(
                     "Queued %d completed torrents for processing",
                     len(completed_torrents),
@@ -118,7 +118,8 @@ class TorrentOrchestrator:
             if monitoring_torrents:
                 logger.debug(
                     "Dispatching monitoring batch: %d torrents | downloading_count=%d",
-                    len(monitoring_torrents), downloading_count,
+                    len(monitoring_torrents),
+                    downloading_count,
                 )
                 self.task_queue.put(
                     {
@@ -143,12 +144,8 @@ class TorrentOrchestrator:
                 logger.debug("No orphaned 'processing' tasks found at startup.")
                 return
 
-            logger.info(
-                "Recovering %d orphaned 'processing' tasks...", len(all_torrents)
-            )
-            self.client.remove_torrents_tag(
-                hashes=[t.hash for t in all_torrents], tag="processing"
-            )
+            logger.info("Recovering %d orphaned 'processing' tasks...", len(all_torrents))
+            self.client.remove_torrents_tag(hashes=[t.hash for t in all_torrents], tag="processing")
 
             added_torrents = []
             completed_torrents = []

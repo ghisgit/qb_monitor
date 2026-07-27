@@ -30,9 +30,7 @@ class CompletedHandler(BaseHandler):
             return
 
         if content_path.is_file():
-            self.logger.debug(
-                "Skipping single-file torrent: %s", content_path.name
-            )
+            self.logger.debug("Skipping single-file torrent: %s", content_path.name)
             self._cleanup_processing_tag(task.hash)
             return
 
@@ -49,9 +47,7 @@ class CompletedHandler(BaseHandler):
 
     def _ensure_content_path_exists(self, path: Path, torrent_name: str) -> bool:
         if not path.exists():
-            self.logger.warning(
-                "Content path missing for '%s': %s", torrent_name, path
-            )
+            self.logger.warning("Content path missing for '%s': %s", torrent_name, path)
             return False
         return True
 
@@ -63,9 +59,7 @@ class CompletedHandler(BaseHandler):
             if file_path.exists():
                 try:
                     file_path.unlink()
-                    self.logger.debug(
-                        "Deleted unwanted file (priority=0): %s", f.name
-                    )
+                    self.logger.debug("Deleted unwanted file (priority=0): %s", f.name)
                 except OSError as e:
                     self.logger.error("Failed to delete %s: %s", file_path, e)
 
@@ -86,9 +80,7 @@ class CompletedHandler(BaseHandler):
                     if self._match_rule(d):
                         all_paths.append(Path(root) / d)
         except OSError as e:
-            self.logger.error(
-                "Failed to scan directory tree %s: %s", content_path, e
-            )
+            self.logger.error("Failed to scan directory tree %s: %s", content_path, e)
             return 0
 
         if all_paths:
@@ -114,9 +106,7 @@ class CompletedHandler(BaseHandler):
                     try:
                         if dir_path.exists() and not any(dir_path.iterdir()):
                             dir_path.rmdir()
-                            self.logger.debug(
-                                "Deleted empty dir (recursive): %s", dir_path
-                            )
+                            self.logger.debug("Deleted empty dir (recursive): %s", dir_path)
                             deleted_count += 1
                     except OSError:
                         continue

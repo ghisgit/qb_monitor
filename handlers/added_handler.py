@@ -16,9 +16,7 @@ class AddedHandler(BaseHandler):
 
         files = task.files
         if not files or len(files) <= 1:
-            self.logger.debug(
-                "Skipping: empty, single-file, or metadata-only torrent"
-            )
+            self.logger.debug("Skipping: empty, single-file, or metadata-only torrent")
             self._cleanup_processing_tag(task.hash)
             return
 
@@ -26,9 +24,7 @@ class AddedHandler(BaseHandler):
 
         file_id_to_name = {f.id: f.name for f in files}
 
-        files_to_disable: list[int] = [
-            f.id for f in files if f.priority != 0 and self._match_rule(f.name)
-        ]
+        files_to_disable: list[int] = [f.id for f in files if f.priority != 0 and self._match_rule(f.name)]
 
         if not files_to_disable:
             self.logger.debug("No files matched skip rules in '%s'", task.name)
@@ -44,9 +40,7 @@ class AddedHandler(BaseHandler):
                 task.name,
             )
             for fid in files_to_disable:
-                self.logger.debug(
-                    "Disabled: %s", file_id_to_name.get(fid, "<? >")
-                )
+                self.logger.debug("Disabled: %s", file_id_to_name.get(fid, "<? >"))
         except Exception as e:
             self.logger.error("Failed to disable files for %s: %s", short_hash, e)
         finally:

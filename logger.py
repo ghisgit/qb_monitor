@@ -1,13 +1,12 @@
 import json
 import logging
-import os
 import re
-import time
 import threading
+import time
 from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-
+from typing import override
 
 FATAL = 60
 logging.addLevelName(FATAL, "FATAL")
@@ -27,10 +26,7 @@ class StructuredFormatter(logging.Formatter):
         super().__init__()
         self.environment = environment
         self.json_format = json_format
-        self._text_fmt = (
-            "%(asctime)s.%(msecs)03d | %(levelname)-8s | %(name)15s | "
-            "T:%(threadName)-10s | %(message)s"
-        )
+        self._text_fmt = "%(asctime)s.%(msecs)03d | %(levelname)-8s | %(name)15s | T:%(threadName)-10s | %(message)s"
 
     def format(self, record):
         if not self.json_format:
@@ -105,23 +101,21 @@ class ContextFilter(logging.Filter):
 
 
 class SizeTimeRotatingFileHandler(TimedRotatingFileHandler):
-    def __init__(self, filename, maxBytes=0, when="midnight", backupCount=0, **kwargs):
+    def __init__(self, filename, maxBytes=0, when="midnight", backupCount=0, **kwargs):  # noqa: N803
         super().__init__(filename, when=when, backupCount=backupCount, **kwargs)
         self.maxBytes = maxBytes
 
-    def shouldRollover(self, record):
+    @override
+    def shouldRollover(self, record):  # noqa: N802
         if super().shouldRollover(record):
             return 1
         if self.maxBytes > 0:
-            msg = "%s\n" % self.format(record)
+            msg = f"{self.format(record)}\n"
             try:
                 if self.stream is None:
                     self.stream = self._open()
                 self.stream.seek(0, 2)
-                if (
-                    self.stream.tell() + len(msg.encode("utf-8", errors="replace"))
-                    >= self.maxBytes
-                ):
+                if self.stream.tell() + len(msg.encode("utf-8", errors="replace")) >= self.maxBytes:
                     return 1
             except Exception:
                 pass

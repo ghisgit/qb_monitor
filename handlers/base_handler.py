@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
+
 from client import QBittorrentClient
-from logger import get_logger, ContextFilter
+from logger import get_logger
 from models import MatchRule
 
 
@@ -23,9 +24,7 @@ class BaseHandler(ABC):
             self.client.remove_torrents_tag(hashes=torrent_hash, tag="processing")
             self.logger.debug("Removed 'processing' tag from %s", short_hash)
         except Exception as e:
-            self.logger.warning(
-                "Failed to remove 'processing' tag from %s: %s", short_hash, e
-            )
+            self.logger.warning("Failed to remove 'processing' tag from %s: %s", short_hash, e)
 
     @abstractmethod
     def handle(self, task):

@@ -11,4 +11,5 @@ class MatchRule:
         self.compiled = re.compile(self.pattern, re.IGNORECASE)
 
     def matches(self, text: str) -> bool:
+        assert self.compiled is not None
         return bool(self.compiled.search(text))

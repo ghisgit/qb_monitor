@@ -1,8 +1,10 @@
-import time
-import requests
 import functools
-from typing import Tuple, Type, Callable, Any
-from qbittorrentapi import Client, APIError, TorrentFilesList, TorrentInfoList
+import time
+from collections.abc import Callable
+from typing import Any
+
+import requests
+from qbittorrentapi import APIError, Client, TorrentFilesList, TorrentInfoList
 
 from logger import get_logger
 
@@ -13,7 +15,7 @@ def retry(
     max_attempts: int = 3,
     delay: float = 1.0,
     backoff: float = 1.0,
-    exceptions: Tuple[Type[Exception], ...] = (Exception,),
+    exceptions: tuple[type[Exception], ...] = (Exception,),
 ):
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
@@ -64,10 +66,8 @@ class QBittorrentClient:
         backoff=1.5,
         exceptions=(APIError, requests.ReadTimeout),
     )
-    def get_torrents(
-        self, tag: str | None = None, status_filter: str | None = None
-    ) -> TorrentInfoList:
-        return self.client.torrents_info(tag=tag, status_filter=status_filter)
+    def get_torrents(self, tag: str | None = None, status_filter: str | None = None) -> TorrentInfoList:
+        return self.client.torrents_info(tag=tag, status_filter=status_filter)  # type: ignore[arg-type]
 
     @retry(
         delay=1.0,
@@ -95,9 +95,7 @@ class QBittorrentClient:
         exceptions=(APIError, requests.ReadTimeout),
     )
     def set_file_no_download(self, hash, file_ids):
-        return self.client.torrents_file_priority(
-            torrent_hash=hash, file_ids=file_ids, priority=0
-        )
+        return self.client.torrents_file_priority(torrent_hash=hash, file_ids=file_ids, priority=0)
 
     @retry(
         delay=1.0,

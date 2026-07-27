@@ -36,10 +36,7 @@ class MonitorHandler:
         if downloading_count <= self.demotion_threshold:
             return
 
-        to_demote = [
-            t for t in torrents
-            if (now - self._tracker.get(t.hash, (now, 0))[0]) > self.stall_timeout
-        ]
+        to_demote = [t for t in torrents if (now - self._tracker.get(t.hash, (now, 0))[0]) > self.stall_timeout]
 
         if to_demote:
             self.client.move_to_bottom(hashes=[t.hash for t in to_demote])

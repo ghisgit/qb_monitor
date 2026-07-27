@@ -15,10 +15,10 @@ qBittorrent 自动化监控与清理工具。基于标签驱动的事件处理�
 
 | 组件       | 技术                                                            |
 | ---------- | --------------------------------------------------------------- |
-| 语言       | Python 3.12                                                     |
+| 语言       | Python 3.14+                                                    |
 | API 客户端 | [qbittorrent-api](https://github.com/rmartin16/qbittorrent-api) |
 | 配置解析   | PyYAML                                                          |
-| 容器化     | Docker (python:3.12-slim)                                       |
+| 容器化     | Docker (python:3.14-slim-bookworm + uv)                         |
 | 并发模型   | threading + queue (生产者-消费者模式)                           |
 
 ## 适用场景
@@ -76,7 +76,7 @@ qBittorrent 添加种子
 ## 环境要求
 
 - qBittorrent 4.1+ (开启 Web UI)
-- Docker (推荐) 或 Python 3.12+
+- Docker (推荐) 或 Python 3.14+
 - Bash (用于 Shell 脚本标签触发)
 
 ## 安装与配置
@@ -169,15 +169,15 @@ docker run -d \
 ### 直接运行
 
 ```bash
-pip install -r requirements.txt
-python main.py
+uv sync --no-dev
+uv run python main.py
 ```
 
 ### 常用操作
 
 | 操作     | 命令                                   |
 | -------- | -------------------------------------- |
-| 启动     | `python main.py`                       |
+| 启动     | `uv run python main.py`                |
 | 停止     | `Ctrl+C`（优雅退出，等待当前任务完成） |
 | 查看日志 | `tail -f logs/qb_auto.log`             |
 | 调试模式 | 设置 `debug_mode: true`                |
@@ -199,7 +199,7 @@ qb_monitor/
 │   ├── added_torrent.sh     # qBittorrent 添加种子时执行的标签脚本
 │   └── completed_torrent.sh # qBittorrent 完成种子时执行的标签脚本
 ├── Dockerfile               # Docker 构建文件
-├── requirements.txt         # Python 依赖
+├── uv.lock                  # uv 锁定文件（自动生成）
 ├── template_config.yaml     # 配置文件模板
 ├── .gitignore               # Git 忽略规则
 └── README.md                # 项目文档
@@ -234,6 +234,7 @@ monitoring: 批次任务，不操作种子标签，仅追踪与降级
 # handlers/custom_handler.py
 from handlers.base_handler import BaseHandler
 
+
 class CustomHandler(BaseHandler):
     def handle(self, task):
         self.logger.info(f"Custom handling: {task.name}")
@@ -243,6 +244,7 @@ class CustomHandler(BaseHandler):
 ```python
 # main.py 中注册
 from handlers.custom_handler import CustomHandler
+
 custom_handler = CustomHandler(client, rules)
 orchestrator.register_handler("custom", custom_handler.handle)
 ```
