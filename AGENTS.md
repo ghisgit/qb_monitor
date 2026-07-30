@@ -36,7 +36,7 @@ Run order: `ruff check .` → `ruff format . --check` → `pyright` → `pytest`
 
 - Tag-based state machine: `added → processing → (tag removed)`, same for `completed`.
 - Producer-consumer via `threading + queue.Queue`. Orchestrator polls qBittorrent, enqueues tasks; worker threads dispatch via registered handlers.
-- Three handlers registered in `main.py:87-89`: `added`, `completed`, `monitoring` (batch dict, not single torrent).
+- Three handlers registered in `main.py:93-95`: `added`, `completed`, `monitoring` (batch dict, not single torrent).
 - MonitorHandler tracks per-hash stall timestamps in-memory; lost on restart.
 
 ## Quirks / gotchas
@@ -46,6 +46,6 @@ Run order: `ruff check .` → `ruff format . --check` → `pyright` → `pytest`
 - Ruff: `line-length = 120`, `quote-style = "double"`, target `py314`.
 - Pyright: `venvPath = "."`, `venv = ".venv"`, `typeCheckingMode = "basic"`.
 - Logging has a `FATAL` level (value 60), custom `QBLogger`, JSON-structured format in production, thread-local `ContextFilter` for contextual fields, and `SensitiveDataFilter` for secrets.
-- Shell scripts in `scripts/` are **not** run inside Docker; they run on the qBittorrent host as external program hooks.
 - Docker uses `python:3.14-slim-bookworm` with uv; run `docker build -t qb-monitor .` to build.
 - All qBittorrent API calls go through `_request()` with retry logic (exponential backoff, up to 30s cap) and circuit breaker protection.
+- Autorun for added/completed tags is configured automatically via API on startup — no manual qBittorrent config needed.

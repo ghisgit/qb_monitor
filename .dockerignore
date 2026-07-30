@@ -2,9 +2,6 @@
 config.yaml
 template_config.yaml
 
-# Shell 脚本（由 qBittorrent 调用，不在容器内运行）
-scripts/
-
 # 日志
 logs/
 

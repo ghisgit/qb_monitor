@@ -75,9 +75,9 @@ qBittorrent 添加种子
 
 ## 环境要求
 
-- qBittorrent 4.1+ (开启 Web UI)
+- qBittorrent 4.6.0+ (开启 Web UI)
 - Docker (推荐) 或 Python 3.14+
-- Bash (用于 Shell 脚本标签触发)
+- qBittorrent 4.6.0+ (Web UI，用于 autorun 标签触发)
 
 ## 安装与配置
 
@@ -139,18 +139,15 @@ logging:
 | `logging.logfile`                 | str       | 日志文件路径                                              |
 | `logging.json`                    | bool      | 是否使用 JSON 格式输出日志                                 |
 
-### 4. 配置 qBittorrent 自动标签
+### 4. 自动标签配置
 
-在 qBittorrent 的 **工具 → 选项 → 下载** 中设置自动执行脚本：
+启动时自动通过 API 设置 qBittorrent 的 autorun，为种子添加 `added` 和 `completed` 标签。**无需手动配置。**
 
-| 事件       | 脚本路径                       | 参数 |
-| ---------- | ------------------------------ | ---- |
-| 种子添加时 | `scripts/added_torrent.sh`     | `%K` |
-| 种子完成时 | `scripts/completed_torrent.sh` | `%K` |
-
-> `%K` 代表种子哈希值，脚本会自动为种子打上 `added` 或 `completed` 标签。
-
-如果 Shell 脚本中的 qBittorrent 地址与默认 `http://127.0.0.1:8080` 不同，需修改脚本中的 `URL` 变量。
+```bash
+# 等效的 autorun 命令（由 qb-monitor 自动设置）：
+curl -s -f -d "hashes=%K&tags=added" http://127.0.0.1:8080/api/v2/torrents/addTags
+curl -s -f -d "hashes=%K&tags=completed" http://127.0.0.1:8080/api/v2/torrents/addTags
+```
 
 ## 运行
 
@@ -188,7 +185,7 @@ uv run python main.py
 ```text
 qb_monitor/
 ├── main.py                  # 入口：配置加载、日志初始化、线程启动
-├── client.py                # qBittorrent API 客户端封装（含重试装饰器）
+├── client.py                # qBittorrent API 客户端封装（含熔断器 + _request）
 ├── models.py                # 数据模型（MatchRule 正则匹配规则）
 ├── orchestrator.py          # 编排器：轮询种子、任务分发、卡顿降级、异常恢复
 ├── handlers/
@@ -196,9 +193,6 @@ qb_monitor/
 │   ├── added_handler.py     # 添加处理器：跳过匹配规则的文件
 │   ├── completed_handler.py # 完成处理器：删除无用文件和空目录
 │   └── monitor_handler.py   # 监控处理器：追踪卡顿种子，超时降级
-├── scripts/
-│   ├── added_torrent.sh     # qBittorrent 添加种子时执行的标签脚本
-│   └── completed_torrent.sh # qBittorrent 完成种子时执行的标签脚本
 ├── Dockerfile               # Docker 构建文件
 ├── uv.lock                  # uv 锁定文件（自动生成）
 ├── template_config.yaml     # 配置文件模板

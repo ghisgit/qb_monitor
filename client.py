@@ -94,6 +94,35 @@ class QBittorrentClient:
             logger.warning("Health check failed: %s", e)
             return False
 
+    def setup_autorun(self):
+        host = self.client.host.rstrip("/")
+
+        cmd_added = f"bash -c 'curl -s -f -d \"hashes=%K&tags=added\" {host}/api/v2/torrents/addTags'"
+        cmd_completed = f"bash -c 'curl -s -f -d \"hashes=%K&tags=completed\" {host}/api/v2/torrents/addTags'"
+
+        prefs = {
+            "autorun_enabled": True,
+            "autorun_on_torrent_added_enabled": True,
+            "autorun_on_torrent_added_program": cmd_added,
+            "autorun_program": cmd_completed,
+        }
+
+        try:
+            current = self._request(self.client.app_preferences)
+            if (
+                current.get("autorun_enabled") is True
+                and current.get("autorun_on_torrent_added_enabled") is True
+                and current.get("autorun_on_torrent_added_program") == cmd_added
+                and current.get("autorun_program") == cmd_completed
+            ):
+                logger.debug("Autorun already configured, skipping")
+                return
+        except Exception:
+            pass
+
+        self._request(self.client.app_set_preferences, prefs=prefs)
+        logger.info("Autorun configured for added/completed tags")
+
     def get_torrents(self, tag: str | None = None, status_filter: str | None = None) -> TorrentInfoList:
         return self._request(self.client.torrents_info, tag=tag, status_filter=status_filter)
 

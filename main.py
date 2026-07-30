@@ -75,6 +75,11 @@ def main():
         else None,
     )
 
+    try:
+        client.setup_autorun()
+    except Exception:
+        logger.warning("Failed to configure autorun, continuing anyway", exc_info=True)
+
     task_queue = queue.Queue()
 
     added_handler = AddedHandler(client, [MatchRule(p) for p in data["rules"]["added"]])
