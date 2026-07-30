@@ -97,8 +97,8 @@ class QBittorrentClient:
     def setup_autorun(self):
         host = self.client.host.rstrip("/")
 
-        cmd_added = f"bash -c 'curl -s -f -d \"hashes=%K&tags=added\" {host}/api/v2/torrents/addTags'"
-        cmd_completed = f"bash -c 'curl -s -f -d \"hashes=%K&tags=completed\" {host}/api/v2/torrents/addTags'"
+        cmd_added = f"curl -s -f -d hashes=%K&tags=added {host}/api/v2/torrents/addTags"
+        cmd_completed = f"curl -s -f -d hashes=%K&tags=completed {host}/api/v2/torrents/addTags"
 
         prefs = {
             "autorun_enabled": True,
