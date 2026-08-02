@@ -153,15 +153,23 @@ curl -s -f -d "hashes=%K&tags=completed" http://127.0.0.1:8080/api/v2/torrents/a
 
 ### Docker 运行（推荐）
 
+镜像由 GitHub Actions 在每次 push 到 `main` 分支时自动构建并推送至 GitHub Container Registry（标签为 `latest` 和 git SHA），可直接拉取使用：
+
 ```bash
-docker build -t qb-monitor .
+docker pull ghcr.io/ghisgit/qb_monitor:latest
 
 docker run -d \
   --name qb-monitor \
   --restart unless-stopped \
   -v /path/to/config.yaml:/app/config.yaml \
   -v /path/to/logs:/app/logs \
-  qb-monitor
+  ghcr.io/ghisgit/qb_monitor:latest
+```
+
+如需本地构建：
+
+```bash
+docker build -t qb-monitor .
 ```
 
 ### 直接运行
