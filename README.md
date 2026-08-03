@@ -101,16 +101,28 @@ cp template_config.yaml config.yaml
 ```yaml
 rules:
   added:
-    - "(?i)\\.(nfo|txt|jpg|png|url)$"
-    - "(?i)sample"
+    - "(\\.nfo|\\.txt|\\.jpg|\\.png|\\.url)$"
+    - "sample"
   completed:
-    - "(?i)\\.(nfo|txt|jpg|png|url)$"
-    - "(?i)sample"
+    - "(\\.nfo|\\.txt|\\.jpg|\\.png|\\.url)$"
+    - "sample"
 
 qbittorrent:
   host: "http://127.0.0.1:8080"
   username: "admin"
   password: "adminadmin"
+
+client:
+  connect_timeout: 5
+  read_timeout: 30
+  retry:
+    max_attempts: 3
+    delay: 1.0
+    backoff: 1.0
+    cap: 30.0
+  circuit_breaker:
+    failure_threshold: 5
+    recovery_timeout: 30.0
 
 processor:
   poll_interval_seconds: 30
@@ -118,9 +130,16 @@ processor:
   max_worker_threads: 3
 
 logging:
-  level: "DEBUG"
   logfile: "logs/qb_auto.log"
-  json: false
+  level: "INFO"
+  environment: "production"
+  json_format: true
+  rotation:
+    max_file_size_mb: 10
+    backup_count: 30
+    retention_days: 30
+    when: "midnight"
+  sensitive_masking: true
 ```
 
 ### 3. 配置项说明
@@ -135,9 +154,23 @@ logging:
 | `processor.poll_interval_seconds` | int       | 轮询间隔（秒）                                            |
 | `processor.stall_timeout_hours` | float     | 卡顿超时（小时），超过此时间种子将被降级                  |
 | `processor.max_worker_threads`    | int       | 工作线程数                                                |
-| `logging.level`                   | str       | 日志级别 (`DEBUG` / `INFO` / `WARNING` / `ERROR`)        |
+| `client.connect_timeout`          | number    | 连接超时（秒），默认 5                                    |
+| `client.read_timeout`             | number    | 读取超时（秒），默认 30                                   |
+| `client.retry.max_attempts`       | int       | API 调用最大重试次数，默认 3                              |
+| `client.retry.delay`              | number    | 初始重试延迟（秒），默认 1.0                              |
+| `client.retry.backoff`            | number    | 延迟倍增因子，默认 1.0                                    |
+| `client.retry.cap`                | number    | 最大重试延迟上限（秒），默认 30.0                         |
+| `client.circuit_breaker.failure_threshold` | int | 连续失败次数阈值，超过后熔断，默认 5              |
+| `client.circuit_breaker.recovery_timeout` | number | 熔断后恢复等待时间（秒），默认 30.0              |
+| `logging.level`                   | str       | 日志级别 (`DEBUG` / `INFO` / `WARNING` / `ERROR` / `FATAL`) |
 | `logging.logfile`                 | str       | 日志文件路径                                              |
-| `logging.json`                    | bool      | 是否使用 JSON 格式输出日志                                 |
+| `logging.environment`             | str       | 运行环境 (`development` / `testing` / `production`)，默认 `production` |
+| `logging.json_format`             | bool      | 是否使用 JSON 格式输出日志，默认随 environment（生产为 true） |
+| `logging.sensitive_masking`       | bool      | 是否脱敏 password/token/secret 等敏感信息，生产默认开启 |
+| `logging.rotation.max_file_size_mb` | number   | 单个日志文件最大大小（MB），默认 10                      |
+| `logging.rotation.backup_count`   | int       | 保留的备份文件数量，默认 30                               |
+| `logging.rotation.retention_days` | int       | 日志文件保留天数，超期自动清理，默认 30                   |
+| `logging.rotation.when`           | str       | 按时间轮转 (`midnight` / `H` / `D`)，默认 `midnight`      |
 
 ### 4. 自动标签配置
 

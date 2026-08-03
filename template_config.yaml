@@ -1,9 +1,12 @@
-# 种子匹配规则（正则表达式，不区分大小写）
+# 种子匹配规则（正则表达式，匹配不区分大小写）
+# 说明：规则列表为空（[]）时不启用任何规则
 rules:
   added: # 新增种子时触发的规则，匹配文件名将跳过下载
-    - ""
+    - "(\\.nfo|\\.txt|\\.jpg|\\.png|\\.url)$" # 示例：跳过说明/封面/字幕网址类文件
+    - "sample" # 示例：跳过影片截图(sample)
   completed: # 种子完成时触发的规则，匹配文件名/目录名将删除
-    - ""
+    - "(\\.nfo|\\.txt|\\.jpg|\\.png|\\.url)$" # 示例：删除说明/封面/字幕网址类文件
+    - "sample" # 示例：删除影片截图(sample)
 
 # qBittorrent WebUI 连接配置
 qbittorrent:
@@ -11,7 +14,7 @@ qbittorrent:
   username: "admin" # WebUI 用户名
   password: "adminadmin" # WebUI 密码
 
-# 客户端高级配置（可选，省略则使用默认值）
+# 客户端高级配置（可选，省略时使用代码内置默认值）
 client:
   connect_timeout: 5 # 连接超时（秒）
   read_timeout: 30 # 读取超时（秒）
@@ -30,10 +33,11 @@ processor:
   stall_timeout_hours: 1 # 停滞超时（小时），超过此时间的下载种子将被降级
   max_worker_threads: 3 # 最大工作线程数，并发处理种子的数量
 
-# 日志系统配置
+# 日志系统配置（environment 默认 production；json_format 生产环境默认 true；
+# sensitive_masking 生产环境默认开启）
 logging:
   logfile: "logs/qb_auto.log" # 日志文件路径
-  level: "DEBUG" # 日志级别: DEBUG / INFO / WARNING / ERROR / FATAL
+  level: "INFO" # 日志级别: DEBUG / INFO / WARNING / ERROR / FATAL（DEBUG 用于调试）
   environment: "development" # 运行环境: development / testing / production
   json_format: false # true=JSON结构化输出, false=可读文本格式
   rotation: # 日志轮转策略
