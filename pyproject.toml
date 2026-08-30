@@ -1,7 +1,7 @@
 [project]
 name = "qb-monitor"
 version = "0.1.0"
-description = "Add your description here"
+description = "自动监控 qBittorrent 的标签驱动工具：按分类打标签、清理无用文件、卡顿降级，并用 DeepSeek Harness 识别媒体并匹配 TMDB，按 Jellyfin 结构硬链接整理入库。"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
