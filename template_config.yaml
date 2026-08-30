@@ -8,12 +8,15 @@ rules:
     - "(\\.nfo|\\.txt|\\.jpg|\\.png|\\.url)$" # 示例：删除说明/封面/字幕网址类文件
     - "sample" # 示例：删除影片截图(sample)
 
-# 分类标签映射（可选）：added/completed 动作完成后按 qB 分类（Category）补打标签
-# 检测：种子分类与键名精确匹配（in）；值支持字符串或列表；省略或为空则不启用
+# 分类标签映射（可选）：按动作（added/completed）区分，动作完成后按 qB 分类（Category）补打标签
+# qB 中每个种子最多只有一个分类；检测：分类与键名正则匹配（re.search，不区分大小写，可命中
+# 子分类如 movies/4K）；多个键命中时标签合并去重；值支持字符串或列表；省略或为空则不启用
 category_tags:
-  movies: "电影" # 示例：分类 movies → 打标签 "电影"
-  tv: "剧集" # 示例：分类 tv → 打标签 "剧集"
-  anime: ["动漫", "追番"] # 示例：分类 anime → 打标签 "动漫" 和 "追番"
+  added: # 新增种子处理完成后应用
+    "^movies": "电影" # 示例：分类 movies、movies/4K 均命中
+    "^anime": ["动漫", "追番"] # 示例：一次打两个标签
+  completed: # 完成清理完成后应用
+    "^tv": "剧集" # 示例：分类 tv、tv/纪录片 等命中
 
 # qBittorrent WebUI 连接配置
 qbittorrent:

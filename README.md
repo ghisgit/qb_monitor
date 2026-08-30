@@ -65,7 +65,7 @@ qBittorrent 添加种子
         │          移除触发标签（失败则保留，下轮重试）
         │                     │
         │          Post 链（仅 enable_post_chain 标签）
-        │          CategoryTagHandler 按分类补打标签
+        │          CategoryTagHandler 按动作×分类正则补打标签
         │                     │
         ▼                     ▼
        完成 ✅
@@ -146,7 +146,8 @@ logging:
 | --------------------------------- | --------- | --------------------------------------------------------- |
 | `rules.added`                     | list[str] | 添加时文件名匹配规则（正则表达式），匹配的文件设为不下载  |
 | `rules.completed`                 | list[str] | 完成后文件/目录名匹配规则（正则表达式），匹配的项将被删除 |
-| `category_tags`                   | dict[str, str \| list[str]] | 可选；added/completed 动作完成后按 qB 分类（Category）精确匹配补打标签，省略或为空则不启用 |
+| `category_tags.added`             | dict[str, str \| list[str]] | 可选；added 动作完成后按 qB 分类与键名正则匹配（re.search，不区分大小写）补打标签，省略或为空则不启用 |
+| `category_tags.completed`         | dict[str, str \| list[str]] | 可选；completed 动作完成后按 qB 分类与键名正则匹配（re.search，不区分大小写）补打标签，省略或为空则不启用 |
 | `qbittorrent.host`                | str       | qBittorrent Web UI 地址                                   |
 | `qbittorrent.username`            | str       | Web UI 用户名                                             |
 | `qbittorrent.password`            | str       | Web UI 密码                                               |
@@ -231,7 +232,7 @@ qb_monitor/
 ├── handlers/
 │   ├── base_handler.py      # 处理器基类：规则匹配、标签清理
 │   ├── added_handler.py     # 添加处理器：跳过匹配规则的文件
-│   ├── category_tag_handler.py # 分类标签处理器：post 链按 qB 分类补打标签
+│   ├── category_tag_handler.py # 分类标签处理器：post 链按动作×分类正则补打标签
 │   ├── completed_handler.py # 完成处理器：删除无用文件和空目录
 │   └── monitor_handler.py   # 监控处理器：追踪卡顿种子，超时降级
 ├── Dockerfile               # Docker 构建文件
@@ -262,7 +263,7 @@ monitoring: 批次任务，不操作种子标签，仅追踪与降级，不进 p
 项目采用标签驱动的注册式架构，添加新的触发标签处理器只需两步：
 
 1. 创建继承 `BaseHandler` 的处理器类，实现 `handle(self, task)` 方法
-2. 在 `main.py` 中注册：`orchestrator.register_handler("your_tag", your_handler.handle)`；若需在处理成功后执行 post 链，传入 `enable_post_chain=True`；批量任务用 `orchestrator.register_batch_handler("name", handler.handle)` 注册，post 链用 `orchestrator.register_post_handler(handler.handle)` 注册
+2. 在 `main.py` 中注册：`orchestrator.register_handler("your_tag", your_handler.handle)`；若需在处理成功后执行 post 链，传入 `enable_post_chain=True`；批量任务用 `orchestrator.register_batch_handler("name", handler.handle)` 注册，post 链用 `orchestrator.register_post_handler(handler.handle)` 注册（可传 `tags=` 限定仅在特定触发标签成功后执行）
 
 触发标签由 Orchestrator 从注册表动态推导，新增标签无需改动轮询逻辑。
 

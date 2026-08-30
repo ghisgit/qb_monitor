@@ -230,6 +230,33 @@ class TestPostChain:
 
         post.assert_not_called()
 
+    def test_post_handler_scoped_to_tag_only_runs_for_that_tag(self):
+        # added/completed 的 post 处理器互不越界（CategoryTagHandler 按动作区分依赖此语义）
+        orch, _, _ = make_orchestrator([])
+        added_post = MagicMock()
+        completed_post = MagicMock()
+        orch.register_handler("added", lambda t: None, enable_post_chain=True)
+        orch.register_handler("completed", lambda t: None, enable_post_chain=True)
+        orch.register_post_handler(added_post, tags="added")
+        orch.register_post_handler(completed_post, tags="completed")
+
+        orch.dispatch(make_torrent(tags="added"))
+
+        added_post.assert_called_once()
+        completed_post.assert_not_called()
+
+    def test_post_handler_scope_accepts_multiple_tags(self):
+        orch, _, _ = make_orchestrator([])
+        post = MagicMock()
+        orch.register_handler("added", lambda t: None, enable_post_chain=True)
+        orch.register_handler("completed", lambda t: None, enable_post_chain=True)
+        orch.register_post_handler(post, tags=["added", "completed"])
+
+        orch.dispatch(make_torrent(tags="completed"))
+        orch.dispatch(make_torrent(hash="b" * 40, tags="added"))
+
+        assert post.call_count == 2
+
     def test_post_handler_single_failure_does_not_stop_next(self):
         orch, _, _ = make_orchestrator([])
         failing = MagicMock(side_effect=RuntimeError("post boom"))

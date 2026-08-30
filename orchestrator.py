@@ -2,7 +2,7 @@ import queue
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import timedelta
 
 from qbittorrentapi import TorrentDictionary, TorrentInfoList
@@ -30,7 +30,7 @@ class TorrentOrchestrator:
         self.stall_timeout = timedelta(hours=stall_timeout_hours)
         self._dispatcher: dict[str, TorrentHandler] = {}  # 触发标签 → 种子处理器（注册顺序即优先级）
         self._batch_dispatcher: dict[str, BatchHandler] = {}  # 批量任务名 → 处理器
-        self._post_handlers: list[TorrentHandler] = []
+        self._post_handlers: list[tuple[TorrentHandler, frozenset[str] | None]] = []
         self._post_tags: set[str] = set()  # 启用 post 链的触发标签
         self._stop_event = threading.Event()
 
@@ -44,9 +44,14 @@ class TorrentOrchestrator:
         """注册批量任务处理器（dict 任务按 type 字段路由）。"""
         self._batch_dispatcher[name] = handler_fn
 
-    def register_post_handler(self, handler_fn: TorrentHandler) -> None:
-        """注册 post 链处理器，按注册顺序依次执行，单点失败不影响后续。"""
-        self._post_handlers.append(handler_fn)
+    def register_post_handler(self, handler_fn: TorrentHandler, tags: str | Iterable[str] | None = None) -> None:
+        """注册 post 链处理器，按注册顺序依次执行，单点失败不影响后续。
+
+        tags=None 时对所有启用 post 链的触发标签生效；
+        传入触发标签（字符串或可迭代）则仅在这些标签的处理成功后执行。
+        """
+        tag_filter = frozenset([tags]) if isinstance(tags, str) else frozenset(tags) if tags is not None else None
+        self._post_handlers.append((handler_fn, tag_filter))
 
     def dispatch(self, task):
         # TorrentDictionary 是 dict 子类，必须先判断种子任务再走批量路由
@@ -73,7 +78,7 @@ class TorrentOrchestrator:
         self._remove_trigger_tag(task, tag)
 
         if tag in self._post_tags:
-            self._run_post_handlers(task)
+            self._run_post_handlers(task, tag)
 
     def _dispatch_batch(self, task: dict) -> None:
         name = task.get("type")
@@ -100,8 +105,10 @@ class TorrentOrchestrator:
                 e,
             )
 
-    def _run_post_handlers(self, task: TorrentDictionary) -> None:
-        for post_fn in self._post_handlers:
+    def _run_post_handlers(self, task: TorrentDictionary, tag: str) -> None:
+        for post_fn, tag_filter in self._post_handlers:
+            if tag_filter is not None and tag not in tag_filter:
+                continue
             try:
                 post_fn(task)
             except Exception as e:
