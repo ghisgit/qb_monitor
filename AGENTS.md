@@ -41,11 +41,11 @@ Run order: `ruff check .` → `ruff format . --check` → `pyright` → `pytest`
 - Registrations in `main.py`: `added` / `completed` (both `enable_post_chain=True`), batch `monitoring` via `register_batch_handler`, per-action post handlers `CategoryTagHandler.handle_added` / `.handle_completed` (tags torrents by qBittorrent Category via case-insensitive `re.search` regex rules; each torrent has at most one category and all matching patterns' tags are merged & deduped; post handlers may be scoped to trigger tags via `register_post_handler(fn, tags=...)`), and one `organize` tag handler per entry in `organize.tags` (no post chain).
 - OrganizeHandler / DeepSeekMatcher: DSH agent (via `deepseek-harness-sdk`) does recognition + TMDB matching and returns a validated JSON plan; Python deterministically hardlinks per-file with copy fallback into Jellyfin-structured paths (`media_naming.py`). AI calls are serialized by a lock on the single reused `DeepSeekHarness` runtime; per-torrent fresh `session_id`; matcher closed on shutdown.
 - `OrganizeIndex` (`organize_index.py`, pure stdlib, `state/organize_index.json`, gitignored): persists per-torrent plan after a successful organize (fingerprint = sorted relative paths of planned+placed files, stored dests). A re-triggered torrent whose fingerprint is unchanged reuses the recorded plan+dests and **skips the AI call entirely** (idempotent `_place_file` re-applies missing dests); a changed fingerprint re-runs AI and refreshes the index. Fallback mirrors (`on_match_failure: fallback`) are **not** indexed so re-tagging retries AI. Corrupt/missing index = treated as empty (full flow once, then rebuilt); force re-match by deleting the hash entry from the file (see README 3.1).
-- MonitorHandler tracks per-hash stall timestamps in-memory; lost on restart.
+- MonitorHandler tracks per-hash stall timestamps in-memory; lost on restart. Logging is **event-driven, not per-cycle** (no debug spam each poll): it logs only state transitions — `Tracking`/`Stop tracking` (DEBUG), `Stalled` (WARNING, fires once per stall to avoid repeat alerts), `Recovered`/`Demoted` (INFO) — plus a single per-cycle aggregate summary line at DEBUG that is **emitted only when something changed** (silent otherwise). Demotion still only runs when `downloading_count > demotion_threshold`.
 
 ## Quirks / gotchas
 
-- 183 tests across 11 test files in `tests/`; run with `uv run pytest`.
+- 190 tests across 12 test files in `tests/`; run with `uv run pytest`.
 - Python requirement: `>=3.14` (per `pyproject.toml` and `.python-version`).
 - Ruff: `line-length = 120`, `quote-style = "double"`, target `py314`.
 - Pyright: `venvPath = "."`, `venv = ".venv"`, `typeCheckingMode = "basic"`.

@@ -325,7 +325,7 @@ qb_monitor/
 
 **AddedHandler / CompletedHandler** — 消费者角色，工作线程从队列取出单个种子，执行文件跳过或清理操作，完成后自动清除 `processing` 标签。
 
-**MonitorHandler** — 消费者角色，工作线程从队列取出监控批次，统一追踪 `metaDL`/`stalledDL`/`downloading`/`forcedDL` 四类种子的卡顿时间。降级阈值 `max_active_downloads` 来自 qBittorrent 偏好设置，卡顿超过 `stall_timeout_hours` 时调用 API 降至队列底部。使用自有时间戳，不依赖 qBittorrent 内部计数器。
+**MonitorHandler** — 消费者角色，工作线程从队列取出监控批次，统一追踪 `metaDL`/`stalledDL`/`downloading`/`forcedDL` 四类种子的卡顿时间。降级阈值 `max_active_downloads` 来自 qBittorrent 偏好设置，卡顿超过 `stall_timeout_hours` 时调用 API 降至队列底部。使用自有时间戳，不依赖 qBittorrent 内部计数器。**日志为事件驱动而非每轮刷屏**：仅记录状态变化——`Tracking`/`Stop tracking`（DEBUG）、`Stalled`（WARNING，每次停滞只告警一次）、`Recovered`/`Demoted`（INFO），外加一行**有变化才输出**的每轮聚合摘要（DEBUG），无变化整轮静默。
 
 **OrganizeHandler** — 消费者角色，工作线程从队列取出带触发标签（如 `organize`）的已完成种子：收集可整理视频文件 → `DeepSeekMatcher.match()` 让 agent 识别并匹配 TMDB → 校验后的计划交给命名/落盘引擎按 Jellyfin 结构硬链接（失败回退拷贝）。多 worker 并发时 AI 轮次经锁串行（runtime 进程复用），文件落盘并行。AI 失败或未匹配 → 兜底镜像「保持原始相对路径」进 `fallback_dir`，或按 `on_match_failure: fail` 报错保留触发标签重试。整理成功后计划写入 `OrganizeIndex`（`state/organize_index.json`）；同一已整理种子再次触发时按指纹跳过 AI（见 3.1「重复整理」）。
 
