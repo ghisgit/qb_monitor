@@ -223,6 +223,15 @@ logging:
 
 **失败语义**：AI 瞬时失败（超时/输出不合法）按 `ai_retries` 进程内重试；重试耗尽或 TMDB 无匹配 → `on_match_failure: fallback`（默认）把文件镜像进 `fallback_dir`（保留原始相对路径，不丢文件）或 `fail`（触发标签保留、下轮重试）。落盘具备幂等性（inode 相同即跳过），部分完成后重试安全。
 
+**重复整理（已整理缓存）**：整理成功后，匹配计划（文件清单指纹 + AI 计划 + 目标路径）写入本地索引 `state/organize_index.json`（原子写入，已 gitignore）。同一种子再次打上触发标签时：
+
+- 文件清单未变（指纹一致）→ **跳过 AI 全流程**（不产生 agent 会话、秒级完成）：目标文件在 → 直接确认；缺失（如被手动删除）→ 按记录的计划与目标路径幂等补回；
+- 文件清单变化（新增/移除文件）→ 正常走一次完整 AI 流程并刷新索引；
+- 索引缺失/损坏 → 视为未缓存，走完整流程并重建索引；
+- fallback 镜像（AI 匹配失败）**不写入索引**——重打标签会重试 AI。
+
+强制重新匹配（例如匹配错了片名）：删除 `state/organize_index.json` 中对应条目（或整个文件）后重新打触发标签，即重跑完整流程。
+
 **依赖与限制**：
 
 - `deepseek-harness-sdk` 附带 `deepseek-harness-runtime-bin`（约 210MB 的 bundled runtime），`uv sync` 自动安装；镜像体积相应增大
@@ -295,6 +304,7 @@ qb_monitor/
 ├── orchestrator.py          # 编排器：轮询种子、任务分发、卡顿降级、异常恢复
 ├── ai_matcher.py            # AI 匹配器：DeepSeek Harness SDK 封装、提示词、JSON 计划校验
 ├── media_naming.py          # Jellyfin 官方命名规范纯函数（sanitize/电影/剧集路径）
+├── organize_index.py        # 整理索引：已整理种子的计划缓存（state/organize_index.json）
 ├── handlers/
 │   ├── base_handler.py      # 处理器基类：规则匹配、标签清理
 │   ├── added_handler.py     # 添加处理器：跳过匹配规则的文件
@@ -317,7 +327,7 @@ qb_monitor/
 
 **MonitorHandler** — 消费者角色，工作线程从队列取出监控批次，统一追踪 `metaDL`/`stalledDL`/`downloading`/`forcedDL` 四类种子的卡顿时间。降级阈值 `max_active_downloads` 来自 qBittorrent 偏好设置，卡顿超过 `stall_timeout_hours` 时调用 API 降至队列底部。使用自有时间戳，不依赖 qBittorrent 内部计数器。
 
-**OrganizeHandler** — 消费者角色，工作线程从队列取出带触发标签（如 `organize`）的已完成种子：收集可整理视频文件 → `DeepSeekMatcher.match()` 让 agent 识别并匹配 TMDB → 校验后的计划交给命名/落盘引擎按 Jellyfin 结构硬链接（失败回退拷贝）。多 worker 并发时 AI 轮次经锁串行（runtime 进程复用），文件落盘并行。AI 失败或未匹配 → 兜底镜像「保持原始相对路径」进 `fallback_dir`，或按 `on_match_failure: fail` 报错保留触发标签重试。
+**OrganizeHandler** — 消费者角色，工作线程从队列取出带触发标签（如 `organize`）的已完成种子：收集可整理视频文件 → `DeepSeekMatcher.match()` 让 agent 识别并匹配 TMDB → 校验后的计划交给命名/落盘引擎按 Jellyfin 结构硬链接（失败回退拷贝）。多 worker 并发时 AI 轮次经锁串行（runtime 进程复用），文件落盘并行。AI 失败或未匹配 → 兜底镜像「保持原始相对路径」进 `fallback_dir`，或按 `on_match_failure: fail` 报错保留触发标签重试。整理成功后计划写入 `OrganizeIndex`（`state/organize_index.json`）；同一已整理种子再次触发时按指纹跳过 AI（见 3.1「重复整理」）。
 
 **标签状态机**：
 

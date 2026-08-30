@@ -40,11 +40,12 @@ Run order: `ruff check .` → `ruff format . --check` → `pyright` → `pytest`
 - Worker threads dispatch: dict tasks route through `_batch_dispatcher` by `type` key; torrent tasks run the first matching trigger-tag handler (registration order), then the orchestrator removes the trigger tag on success (kept on failure → retried next cycle), then runs the post chain if the tag opted in via `enable_post_chain=True`.
 - Registrations in `main.py`: `added` / `completed` (both `enable_post_chain=True`), batch `monitoring` via `register_batch_handler`, per-action post handlers `CategoryTagHandler.handle_added` / `.handle_completed` (tags torrents by qBittorrent Category via case-insensitive `re.search` regex rules; each torrent has at most one category and all matching patterns' tags are merged & deduped; post handlers may be scoped to trigger tags via `register_post_handler(fn, tags=...)`), and one `organize` tag handler per entry in `organize.tags` (no post chain).
 - OrganizeHandler / DeepSeekMatcher: DSH agent (via `deepseek-harness-sdk`) does recognition + TMDB matching and returns a validated JSON plan; Python deterministically hardlinks per-file with copy fallback into Jellyfin-structured paths (`media_naming.py`). AI calls are serialized by a lock on the single reused `DeepSeekHarness` runtime; per-torrent fresh `session_id`; matcher closed on shutdown.
+- `OrganizeIndex` (`organize_index.py`, pure stdlib, `state/organize_index.json`, gitignored): persists per-torrent plan after a successful organize (fingerprint = sorted relative paths of planned+placed files, stored dests). A re-triggered torrent whose fingerprint is unchanged reuses the recorded plan+dests and **skips the AI call entirely** (idempotent `_place_file` re-applies missing dests); a changed fingerprint re-runs AI and refreshes the index. Fallback mirrors (`on_match_failure: fallback`) are **not** indexed so re-tagging retries AI. Corrupt/missing index = treated as empty (full flow once, then rebuilt); force re-match by deleting the hash entry from the file (see README 3.1).
 - MonitorHandler tracks per-hash stall timestamps in-memory; lost on restart.
 
 ## Quirks / gotchas
 
-- 165 tests across 10 test files in `tests/`; run with `uv run pytest`.
+- 183 tests across 11 test files in `tests/`; run with `uv run pytest`.
 - Python requirement: `>=3.14` (per `pyproject.toml` and `.python-version`).
 - Ruff: `line-length = 120`, `quote-style = "double"`, target `py314`.
 - Pyright: `venvPath = "."`, `venv = ".venv"`, `typeCheckingMode = "basic"`.

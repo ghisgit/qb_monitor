@@ -3,6 +3,7 @@ import queue
 import re
 import threading
 import time
+from pathlib import Path
 
 import yaml
 from qbittorrentapi import TorrentDictionary
@@ -222,6 +223,7 @@ def main():
         try:
             from ai_matcher import DeepSeekMatcher, MatcherConfig
             from handlers.organize_handler import OrganizeHandler
+            from organize_index import OrganizeIndex
         except ImportError as e:
             raise ValueError(
                 "organize 需要 deepseek-harness-sdk（无 Windows 平台运行时，请使用 Docker/Linux 或关闭 organize）"
@@ -240,15 +242,17 @@ def main():
                 ai_retries=organize_cfg.get("ai_retries", 1),
             )
         )
-        organize_handler = OrganizeHandler(client, matcher, organize_cfg)
+        organize_index = OrganizeIndex(Path("state") / "organize_index.json")
+        organize_handler = OrganizeHandler(client, matcher, organize_cfg, index=organize_index)
         for tag in organize_cfg["tags"]:
             orchestrator.register_handler(tag, organize_handler.handle)
         logger.info(
-            "Organize handler enabled | tags=%s | model=%s | movies=%s | tv=%s",
+            "Organize handler enabled | tags=%s | model=%s | movies=%s | tv=%s | index=%s",
             organize_cfg["tags"],
             dsh_cfg.get("model", "deepseek-v4-flash"),
             organize_cfg["library"]["movies_dir"],
             organize_cfg["library"]["tv_dir"],
+            organize_index.path,
         )
 
     stop_event = threading.Event()

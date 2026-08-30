@@ -8,6 +8,7 @@ from qbittorrentapi import TorrentDictionary
 
 from ai_matcher import MatchError, MatchPlan, PlanFile
 from handlers.organize_handler import OrganizeHandler
+from organize_index import OrganizeIndex
 
 
 class FakeFile:
@@ -59,7 +60,7 @@ def layout(tmp_path):
     )
 
 
-def make_handler(layout, matcher, client=None, **overrides):
+def make_handler(layout, matcher, client=None, index=None, **overrides):
     # 与 main.py 传入的 organize_cfg / template_config.yaml 一致：library 为嵌套节
     cfg = {
         "library": {
@@ -73,8 +74,9 @@ def make_handler(layout, matcher, client=None, **overrides):
         "include_episode_title": False,
         "include_tmdb_id": True,
     }
+    cfg["library"].update(overrides.pop("library", None) or {})
     cfg.update(overrides)
-    return OrganizeHandler(client or MagicMock(), matcher, cfg)
+    return OrganizeHandler(client or MagicMock(), matcher, cfg, index=index)
 
 
 def movie_plan(file: str, title="Movie Name", year=2023, tmdb_id=555) -> MatchPlan:
@@ -388,3 +390,127 @@ class TestGuards:
         with pytest.raises(MatchError):
             handler.handle(task)
         client.remove_torrents_tag.assert_called_once_with(hashes=task.hash, tag="processing")
+
+
+class TestCachedPlan:
+    """已整理种子再次整理：索引命中 → 跳过 AI 全流程；指纹变化/无索引 → 正常重跑。"""
+
+    def test_rerun_skips_ai_when_unchanged(self, layout, tmp_path):
+        write_file(layout.downloads / "Movie.2023.mkv", b"content")
+        matcher = StubMatcher(plan=movie_plan("Movie.2023.mkv"))
+        handler = make_handler(layout, matcher, index=OrganizeIndex(tmp_path / "idx.json"))
+        task = FakeTorrent("Movie.2023", layout.downloads, [FakeFile("Movie.2023.mkv")])
+        handler.handle(task)
+        handler.handle(task)
+
+        assert len(matcher.contexts) == 1  # 第二次未再调用 AI
+        assert movie_dest(layout, "Movie Name", 2023, 555, "Movie Name (2023) [tmdbid-555].mkv").is_file()
+
+    def test_rerun_relinks_missing_dest_without_ai(self, layout, tmp_path):
+        src = layout.downloads / "Movie.2023.mkv"
+        write_file(src, b"content")
+        matcher = StubMatcher(plan=movie_plan("Movie.2023.mkv"))
+        handler = make_handler(layout, matcher, index=OrganizeIndex(tmp_path / "idx.json"))
+        task = FakeTorrent("Movie.2023", layout.downloads, [FakeFile("Movie.2023.mkv")])
+        handler.handle(task)
+
+        dest = movie_dest(layout, "Movie Name", 2023, 555, "Movie Name (2023) [tmdbid-555].mkv")
+        assert dest.is_file()
+        dest.unlink()  # 用户删除了媒体库中的文件
+
+        handler.handle(task)
+        assert len(matcher.contexts) == 1  # 仍不打 AI
+        assert dest.is_file()  # 按记录的计划与路径补回
+        assert os.stat(dest).st_ino == os.stat(src).st_ino
+
+    def test_new_file_in_torrent_forces_ai(self, layout, tmp_path):
+        write_file(layout.downloads / "Movie.2023.mkv", b"a")
+        matcher = StubMatcher(plan=movie_plan("Movie.2023.mkv"))
+        handler = make_handler(layout, matcher, index=OrganizeIndex(tmp_path / "idx.json"))
+        handler.handle(FakeTorrent("Movie.2023", layout.downloads, [FakeFile("Movie.2023.mkv")]))
+
+        write_file(layout.downloads / "Movie.2023.part2.mkv", b"b")
+        handler.handle(
+            FakeTorrent("Movie.2023", layout.downloads, [FakeFile("Movie.2023.mkv"), FakeFile("Movie.2023.part2.mkv")])
+        )
+
+        assert len(matcher.contexts) == 2  # 指纹变化 → 重跑 AI
+        assert [f["file"] for f in matcher.contexts[1]["files"]] == ["Movie.2023.mkv", "Movie.2023.part2.mkv"]
+
+    def test_copy_fallback_files_also_skip(self, layout, tmp_path, monkeypatch):
+        src = layout.downloads / "Movie.2023.mkv"
+        write_file(src, b"content")
+        matcher = StubMatcher(plan=movie_plan("Movie.2023.mkv"))
+        handler = make_handler(layout, matcher, index=OrganizeIndex(tmp_path / "idx.json"))
+        task = FakeTorrent("Movie.2023", layout.downloads, [FakeFile("Movie.2023.mkv")])
+
+        def boom(*_args, **_kwargs):
+            raise OSError(18, "Invalid cross-device link")  # EXDEV → 拷贝落盘
+
+        monkeypatch.setattr("handlers.organize_handler.os.link", boom)
+        handler.handle(task)
+        dest = movie_dest(layout, "Movie Name", 2023, 555, "Movie Name (2023) [tmdbid-555].mkv")
+        assert dest.is_file()
+        assert os.stat(dest).st_ino != os.stat(src).st_ino  # 拷贝而非硬链接
+
+        handler.handle(task)  # 拷贝落盘同样命中索引 → 跳过 AI
+        assert len(matcher.contexts) == 1
+
+    def test_config_change_uses_recorded_dests(self, layout, tmp_path):
+        write_file(layout.downloads / "Movie.2023.mkv", b"content")
+        matcher = StubMatcher(plan=movie_plan("Movie.2023.mkv"))
+        idx = OrganizeIndex(tmp_path / "idx.json")
+        task = FakeTorrent("Movie.2023", layout.downloads, [FakeFile("Movie.2023.mkv")])
+        make_handler(layout, matcher, index=idx).handle(task)
+
+        old_dest = movie_dest(layout, "Movie Name", 2023, 555, "Movie Name (2023) [tmdbid-555].mkv")
+        assert old_dest.is_file()
+
+        alt = layout.movies / "alt"
+        make_handler(layout, matcher, index=idx, library={"movies_dir": str(alt)}).handle(task)
+
+        assert len(matcher.contexts) == 1  # 缓存命中，未重跑 AI
+        assert old_dest.is_file()
+        assert list(alt.glob("**/*")) == []  # 新目录不产生重复落盘
+
+    def test_corrupt_index_falls_back_to_full_flow(self, layout, tmp_path):
+        path = tmp_path / "idx.json"
+        path.write_text("{broken", encoding="utf-8")
+        write_file(layout.downloads / "Movie.2023.mkv", b"content")
+        matcher = StubMatcher(plan=movie_plan("Movie.2023.mkv"))
+        handler = make_handler(layout, matcher, index=OrganizeIndex(path))
+        task = FakeTorrent("Movie.2023", layout.downloads, [FakeFile("Movie.2023.mkv")])
+        handler.handle(task)
+        assert len(matcher.contexts) == 1
+        assert OrganizeIndex(path).get(task.hash) is not None  # 索引被重写为合法
+
+    def test_fallback_mirror_not_cached(self, layout, tmp_path):
+        write_file(layout.downloads / "Movie.2023.mkv", b"content")
+        idx = OrganizeIndex(tmp_path / "idx.json")
+        task = FakeTorrent("Movie.2023", layout.downloads, [FakeFile("Movie.2023.mkv")])
+
+        failing = StubMatcher(error=MatchError("AI down"))
+        make_handler(layout, failing, index=idx).handle(task)
+        assert (layout.fallback / "Movie.2023.mkv").is_file()
+
+        working = StubMatcher(plan=movie_plan("Movie.2023.mkv"))
+        make_handler(layout, working, index=idx).handle(task)
+        assert len(working.contexts) == 1  # fallback 不缓存 → 重打标签重试 AI
+
+    def test_index_none_never_skips(self, layout):
+        write_file(layout.downloads / "Movie.2023.mkv", b"content")
+        matcher = StubMatcher(plan=movie_plan("Movie.2023.mkv"))
+        handler = make_handler(layout, matcher)
+        task = FakeTorrent("Movie.2023", layout.downloads, [FakeFile("Movie.2023.mkv")])
+        handler.handle(task)
+        handler.handle(task)
+        assert len(matcher.contexts) == 2  # 无索引 → 每次全流程（原行为）
+
+    def test_index_persists_across_handler_instances(self, layout, tmp_path):
+        write_file(layout.downloads / "Movie.2023.mkv", b"content")
+        task = FakeTorrent("Movie.2023", layout.downloads, [FakeFile("Movie.2023.mkv")])
+        path = tmp_path / "idx.json"
+        make_handler(layout, StubMatcher(plan=movie_plan("Movie.2023.mkv")), index=OrganizeIndex(path)).handle(task)
+        second = StubMatcher(plan=movie_plan("Movie.2023.mkv"))
+        make_handler(layout, second, index=OrganizeIndex(path)).handle(task)
+        assert second.contexts == []  # 新实例同索引 → 仍跳过

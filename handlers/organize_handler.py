@@ -12,18 +12,40 @@ from pathlib import Path
 
 from qbittorrentapi import TorrentDictionary
 
-from ai_matcher import DeepSeekMatcher, MatchError, MatchPlan
+from ai_matcher import DeepSeekMatcher, MatchError, MatchPlan, PlanFile
 from handlers.base_handler import BaseHandler
 from logger import ContextFilter
 from media_naming import episode_destination, movie_destination
+from organize_index import OrganizeIndex
 
 DEFAULT_VIDEO_EXTENSIONS = [".mp4", ".mkv", ".avi", ".ts", ".m2ts", ".wmv", ".iso"]
 
 
+def _plan_from_entry(entry: dict) -> MatchPlan:
+    """从索引条目重建上次成功整理的 MatchPlan（不经 AI）。"""
+    files = [
+        PlanFile(
+            file=f["file"],
+            season=f.get("season"),
+            episodes=list(f.get("episodes") or []),
+            episode_title=f.get("episode_title"),
+        )
+        for f in entry["files"]
+    ]
+    return MatchPlan(
+        kind=entry["kind"],
+        title=entry["title"],
+        year=entry["year"],
+        tmdb_id=entry["tmdb_id"],
+        files=files,
+    )
+
+
 class OrganizeHandler(BaseHandler):
-    def __init__(self, client, matcher: DeepSeekMatcher, cfg: dict):
+    def __init__(self, client, matcher: DeepSeekMatcher, cfg: dict, index: OrganizeIndex | None = None):
         super().__init__(client, [])
         self.matcher = matcher
+        self.index = index
         self.movies_dir = Path(cfg["library"]["movies_dir"])
         self.tv_dir = Path(cfg["library"]["tv_dir"])
         self.fallback_dir = Path(cfg["library"]["fallback_dir"])
@@ -67,11 +89,61 @@ class OrganizeHandler(BaseHandler):
             "files": [{"file": rel, "size": size} for rel, size in eligible],
         }
 
+        fingerprint = sorted(rel for rel, _size in eligible)
+        entry = self.index.get(task.hash) if self.index is not None else None
+
         try:
-            plan = self.matcher.match(context)
-            self._apply_plan(task, eligible, plan)
+            if entry is not None and entry["fingerprint"] == fingerprint:
+                # 已整理过且文件清单未变：复用上次计划与目标路径，跳过 AI 全流程
+                plan = _plan_from_entry(entry)
+                dests: dict[str, str] | None = dict(entry["dests"])
+                self.logger.info(
+                    "[ORGANIZE] Cached plan hit for '%s' (%s), skipping AI (%d file(s))",
+                    task.name,
+                    task.hash[:8],
+                    len(fingerprint),
+                )
+            else:
+                plan = self.matcher.match(context)
+                dests = None
+
+            placed = self._apply_plan(task, eligible, plan, dests=dests)
+
+            if dests is None and self.index is not None:
+                self._cache_plan(task.hash, plan, placed)
         except MatchError as e:
             self._handle_match_failure(task, eligible, e)
+
+    def _cache_plan(self, torrent_hash: str, plan: MatchPlan, placed: dict[str, str]) -> None:
+        """索引只记录计划覆盖且成功落盘的文件；镜像兜底的文件不记录（允许之后重试 AI）。"""
+        if self.index is None:
+            return
+        entry_files = [
+            {
+                "file": pf.file,
+                "season": pf.season,
+                "episodes": list(pf.episodes),
+                "episode_title": pf.episode_title,
+            }
+            for pf in plan.files
+            if pf.file in placed
+        ]
+        try:
+            self.index.put(
+                torrent_hash,
+                {
+                    "fingerprint": sorted(placed),
+                    "kind": plan.kind,
+                    "title": plan.title,
+                    "year": plan.year,
+                    "tmdb_id": plan.tmdb_id,
+                    "files": entry_files,
+                    "dests": placed,
+                },
+            )
+            self.logger.info("[ORGANIZE] Cached plan for '%s' (%d file(s))", plan.title, len(placed))
+        except Exception as e:  # 索引异常不影响整理结果本身
+            self.logger.warning("Failed to cache organize plan: %s", e)
 
     def _eligible_files(self, task: TorrentDictionary) -> list[tuple[str, int]]:
         """过滤：视频后缀 + 最小大小 + 磁盘存在（priority=0 或已被清理的文件不存在）。"""
@@ -92,46 +164,62 @@ class OrganizeHandler(BaseHandler):
             eligible.append((rel, size))
         return eligible
 
-    def _apply_plan(self, task: TorrentDictionary, eligible: list[tuple[str, int]], plan: MatchPlan) -> None:
+    def _apply_plan(
+        self,
+        task: TorrentDictionary,
+        eligible: list[tuple[str, int]],
+        plan: MatchPlan,
+        dests: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        """按计划落盘；dests 非空时直接使用记录的目标路径（缓存命中，对配置变更免疫）。
+
+        返回 {相对路径: 实际目标路径}（仅计划覆盖且落盘成功的文件）。
+        """
         save_path = Path(task.save_path)
         planned = {pf.file: pf for pf in plan.files}
         stats = {"link": 0, "copy": 0, "skip": 0}
+        placed: dict[str, str] = {}
 
         for index, pf in enumerate(plan.files):
             src = save_path / pf.file
             if not src.is_file():
                 self.logger.warning("Planned file missing on disk, skipping: %s", pf.file)
                 continue
-            suffix = src.suffix
-            if plan.kind == "movie":
-                # 同一种子多个视频文件 → Jellyfin 多段命名 -cd1/-cd2...
-                part = index + 1 if len(plan.files) > 1 else None
-                _dir, dest_base = movie_destination(
-                    self.movies_dir,
-                    plan.title,
-                    plan.year,
-                    plan.tmdb_id,
-                    self.include_tmdb_id,
-                    part=part,
-                )
+            if dests is not None:
+                dest = Path(dests[pf.file])
             else:
-                _dir, dest_base = episode_destination(
-                    self.tv_dir,
-                    plan.title,
-                    plan.year,
-                    plan.tmdb_id,
-                    pf.season or 0,
-                    pf.episodes,
-                    pf.episode_title,
-                    self.include_tmdb_id,
-                    self.include_episode_title,
-                )
-            action = self._place_file(src, Path(str(dest_base) + suffix))
+                suffix = src.suffix
+                if plan.kind == "movie":
+                    # 同一种子多个视频文件 → Jellyfin 多段命名 -cd1/-cd2...
+                    part = index + 1 if len(plan.files) > 1 else None
+                    _dir, dest_base = movie_destination(
+                        self.movies_dir,
+                        plan.title,
+                        plan.year,
+                        plan.tmdb_id,
+                        self.include_tmdb_id,
+                        part=part,
+                    )
+                else:
+                    _dir, dest_base = episode_destination(
+                        self.tv_dir,
+                        plan.title,
+                        plan.year,
+                        plan.tmdb_id,
+                        pf.season or 0,
+                        pf.episodes,
+                        pf.episode_title,
+                        self.include_tmdb_id,
+                        self.include_episode_title,
+                    )
+                dest = Path(str(dest_base) + suffix)
+            action = self._place_file(src, dest)
             stats[action] += 1
+            placed[pf.file] = str(dest)
             if action == "link":
-                self.logger.debug("Hardlinked %s → %s", pf.file, dest_base)
+                self.logger.debug("Hardlinked %s → %s", pf.file, dest_base if dests is None else dest)
             elif action == "copy":
-                self.logger.warning("Fallback copy %s → %s", pf.file, dest_base)
+                self.logger.warning("Fallback copy %s → %s", pf.file, dest_base if dests is None else dest)
 
         unplanned = [rel for rel, _size in eligible if rel not in planned]
         if unplanned:
@@ -153,6 +241,7 @@ class OrganizeHandler(BaseHandler):
             stats["copy"],
             stats["skip"],
         )
+        return placed
 
     def _handle_match_failure(self, task: TorrentDictionary, eligible: list[tuple[str, int]], error: Exception) -> None:
         self.logger.warning("AI match failed for '%s' (%s): %s", task.name, task.hash[:8], error)
