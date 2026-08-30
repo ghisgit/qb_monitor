@@ -4,7 +4,12 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = ["pyyaml>=6.0.3", "qbittorrent-api>=2026.7.0", "requests>=2.31.0"]
+dependencies = [
+    "deepseek-harness-sdk>=0.1.1rc1 ; sys_platform != 'win32'",
+    "pyyaml>=6.0.3",
+    "qbittorrent-api>=2026.7.0",
+    "requests>=2.31.0",
+]
 
 [dependency-groups]
 dev = [

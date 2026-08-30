@@ -1,3 +1,4 @@
+import os
 import queue
 import re
 import threading
@@ -83,6 +84,85 @@ def validate_config(data: dict):
                         f"category_tags.{action}.{pattern} must be a non-empty string or list of non-empty strings"
                     )
 
+    _validate_organize(data)
+
+
+def _validate_organize(data: dict) -> None:
+    """organize 为可选节；enabled=true 时校验全部依赖项（AI SDK、目录、凭证）。"""
+    organize = data.get("organize")
+    if not organize:
+        return
+    if not isinstance(organize, dict):
+        raise ValueError("organize must be a mapping")
+
+    enabled = organize.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValueError("organize.enabled must be a boolean")
+    if not enabled:
+        return
+
+    tags = organize.get("tags")
+    if not isinstance(tags, list) or not tags or not all(isinstance(t, str) and t.strip() for t in tags):
+        raise ValueError("organize.tags must be a non-empty list of non-empty strings")
+
+    library = organize.get("library")
+    if not isinstance(library, dict):
+        raise ValueError("organize.library must be a mapping")
+    for key in ("movies_dir", "tv_dir", "fallback_dir"):
+        value = library.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"organize.library.{key} must be a non-empty string")
+
+    on_exists = organize.get("on_exists", "skip")
+    if on_exists not in ("skip", "overwrite"):
+        raise ValueError("organize.on_exists must be 'skip' or 'overwrite'")
+    on_failure = organize.get("on_match_failure", "fallback")
+    if on_failure not in ("fallback", "fail"):
+        raise ValueError("organize.on_match_failure must be 'fallback' or 'fail'")
+
+    min_size = organize.get("min_file_size_mb", 0)
+    if not isinstance(min_size, (int, float)) or isinstance(min_size, bool) or min_size < 0:
+        raise ValueError("organize.min_file_size_mb must be a non-negative number")
+
+    for flag in ("include_episode_title", "include_tmdb_id"):
+        if flag in organize and not isinstance(organize[flag], bool):
+            raise ValueError(f"organize.{flag} must be a boolean")
+
+    ext_list = organize.get("video_extensions")
+    if ext_list is not None and (
+        not isinstance(ext_list, list) or not ext_list or not all(isinstance(e, str) and e.strip() for e in ext_list)
+    ):
+        raise ValueError("organize.video_extensions must be a non-empty list of non-empty strings")
+
+    tmdb_key = organize.get("tmdb_api_key")
+    if not isinstance(tmdb_key, str) or not tmdb_key.strip():
+        raise ValueError("organize.tmdb_api_key must be a non-empty string")
+
+    ai_retries = organize.get("ai_retries", 1)
+    if not isinstance(ai_retries, int) or isinstance(ai_retries, bool) or ai_retries < 0:
+        raise ValueError("organize.ai_retries must be a non-negative integer")
+
+    dsh = organize.get("dsh")
+    if not isinstance(dsh, dict):
+        raise ValueError("organize.dsh must be a mapping")
+
+    request_timeout = dsh.get("request_timeout_seconds", 300)
+    if not isinstance(request_timeout, (int, float)) or isinstance(request_timeout, bool) or request_timeout <= 0:
+        raise ValueError("organize.dsh.request_timeout_seconds must be a positive number")
+
+    api_key = dsh.get("api_key")
+    if not (isinstance(api_key, str) and api_key.strip()) and not os.environ.get("DEEPSEEK_API_KEY"):
+        raise ValueError("organize.dsh.api_key or environment variable DEEPSEEK_API_KEY is required")
+
+    if "model" in dsh and (not isinstance(dsh["model"], str) or not dsh["model"].strip()):
+        raise ValueError("organize.dsh.model must be a non-empty string")
+    if "base_url" in dsh and dsh["base_url"] is not None and not isinstance(dsh["base_url"], str):
+        raise ValueError("organize.dsh.base_url must be a string or omitted")
+    if "language" in dsh and (not isinstance(dsh["language"], str) or not dsh["language"].strip()):
+        raise ValueError("organize.dsh.language must be a non-empty string")
+    if "session_root" in dsh and (not isinstance(dsh["session_root"], str) or not dsh["session_root"].strip()):
+        raise ValueError("organize.dsh.session_root must be a non-empty string")
+
 
 def main():
     data = load_config()
@@ -135,6 +215,41 @@ def main():
             orchestrator.register_post_handler(category_tag_handler.handle_added, tags="added")
         if "completed" in category_tags:
             orchestrator.register_post_handler(category_tag_handler.handle_completed, tags="completed")
+
+    organize_cfg = data.get("organize")
+    matcher = None
+    if organize_cfg and organize_cfg.get("enabled"):
+        try:
+            from ai_matcher import DeepSeekMatcher, MatcherConfig
+            from handlers.organize_handler import OrganizeHandler
+        except ImportError as e:
+            raise ValueError(
+                "organize 需要 deepseek-harness-sdk（无 Windows 平台运行时，请使用 Docker/Linux 或关闭 organize）"
+            ) from e
+
+        dsh_cfg = organize_cfg.get("dsh", {})
+        matcher = DeepSeekMatcher(
+            MatcherConfig(
+                tmdb_api_key=organize_cfg["tmdb_api_key"],
+                model=dsh_cfg.get("model", "deepseek-v4-flash"),
+                api_key=dsh_cfg.get("api_key") or None,
+                base_url=dsh_cfg.get("base_url") or None,
+                language=dsh_cfg.get("language", "zh-CN"),
+                request_timeout_seconds=dsh_cfg.get("request_timeout_seconds", 300),
+                session_root=dsh_cfg.get("session_root", "sessions"),
+                ai_retries=organize_cfg.get("ai_retries", 1),
+            )
+        )
+        organize_handler = OrganizeHandler(client, matcher, organize_cfg)
+        for tag in organize_cfg["tags"]:
+            orchestrator.register_handler(tag, organize_handler.handle)
+        logger.info(
+            "Organize handler enabled | tags=%s | model=%s | movies=%s | tv=%s",
+            organize_cfg["tags"],
+            dsh_cfg.get("model", "deepseek-v4-flash"),
+            organize_cfg["library"]["movies_dir"],
+            organize_cfg["library"]["tv_dir"],
+        )
 
     stop_event = threading.Event()
 
@@ -198,6 +313,11 @@ def main():
             logger.warning("Shutdown timed out with %d tasks remaining", task_queue.unfinished_tasks)
         else:
             logger.info("✅ All tasks completed. Bye!")
+        if matcher is not None:
+            try:
+                matcher.close()
+            except Exception:
+                logger.warning("Failed to close AI matcher", exc_info=True)
 
 
 if __name__ == "__main__":

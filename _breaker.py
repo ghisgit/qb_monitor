@@ -61,6 +61,9 @@ class CircuitBreaker:
             self._failure_count += 1
             self._last_failure_time = time.monotonic()
             if self._failure_count >= self._config.failure_threshold:
-                logger.info("Circuit breaker: CLOSED → OPEN (failure_count=%d >= threshold=%d)",
-                            self._failure_count, self._config.failure_threshold)
+                logger.info(
+                    "Circuit breaker: CLOSED → OPEN (failure_count=%d >= threshold=%d)",
+                    self._failure_count,
+                    self._config.failure_threshold,
+                )
                 self._state = "OPEN"

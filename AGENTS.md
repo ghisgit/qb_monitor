@@ -30,6 +30,7 @@ Run order: `ruff check .` → `ruff format . --check` → `pyright` → `pytest`
 
 - Copy `template_config.yaml` → `config.yaml` (gitignored) before running.
 - Config schema validated at startup in `main.py` — section top-level keys are mandatory; `category_tags` is an optional section (when present: mapping of action `added`/`completed` → non-empty mapping of category regex → non-empty tag string or tag list; patterns must compile).
+- `organize` is an optional section (absent → disabled). When `enabled: true`: `tags` non-empty, `library.movies_dir|tv_dir|fallback_dir` non-empty strings, `on_exists` ∈ {skip, overwrite}, `on_match_failure` ∈ {fallback, fail}, `min_file_size_mb` ≥ 0, `tmdb_api_key` non-empty, `ai_retries` ≥ 0, `dsh.request_timeout_seconds` > 0, DeepSeek key via `dsh.api_key` or `DEEPSEEK_API_KEY` env — else `ValueError` at startup.
 - Logging uses a nested `logging` section (not flat `logfile`/`debug_mode`).
 
 ## Architecture
@@ -37,16 +38,20 @@ Run order: `ruff check .` → `ruff format . --check` → `pyright` → `pytest`
 - Tag-driven dispatch: trigger tags are derived dynamically from the handler registry; adding a new trigger tag needs only `register_handler` (zero polling changes).
 - Producer-consumer via `threading + queue.Queue`. Orchestrator polls qBittorrent; torrents with metadata, no `processing` tag and any registered trigger tag are batch-tagged `processing` and enqueued uniformly (trigger tags are NOT removed during polling).
 - Worker threads dispatch: dict tasks route through `_batch_dispatcher` by `type` key; torrent tasks run the first matching trigger-tag handler (registration order), then the orchestrator removes the trigger tag on success (kept on failure → retried next cycle), then runs the post chain if the tag opted in via `enable_post_chain=True`.
-- Four registrations in `main.py`: `added` / `completed` (both `enable_post_chain=True`), batch `monitoring` via `register_batch_handler`, and per-action post handlers `CategoryTagHandler.handle_added` / `.handle_completed` (tags torrents by qBittorrent Category via case-insensitive `re.search` regex rules; each torrent has at most one category and all matching patterns' tags are merged & deduped; post handlers may be scoped to trigger tags via `register_post_handler(fn, tags=...)`).
+- Registrations in `main.py`: `added` / `completed` (both `enable_post_chain=True`), batch `monitoring` via `register_batch_handler`, per-action post handlers `CategoryTagHandler.handle_added` / `.handle_completed` (tags torrents by qBittorrent Category via case-insensitive `re.search` regex rules; each torrent has at most one category and all matching patterns' tags are merged & deduped; post handlers may be scoped to trigger tags via `register_post_handler(fn, tags=...)`), and one `organize` tag handler per entry in `organize.tags` (no post chain).
+- OrganizeHandler / DeepSeekMatcher: DSH agent (via `deepseek-harness-sdk`) does recognition + TMDB matching and returns a validated JSON plan; Python deterministically hardlinks per-file with copy fallback into Jellyfin-structured paths (`media_naming.py`). AI calls are serialized by a lock on the single reused `DeepSeekHarness` runtime; per-torrent fresh `session_id`; matcher closed on shutdown.
 - MonitorHandler tracks per-hash stall timestamps in-memory; lost on restart.
 
 ## Quirks / gotchas
 
-- 82 tests across 7 test files in `tests/`; run with `uv run pytest`.
+- 165 tests across 10 test files in `tests/`; run with `uv run pytest`.
 - Python requirement: `>=3.14` (per `pyproject.toml` and `.python-version`).
 - Ruff: `line-length = 120`, `quote-style = "double"`, target `py314`.
 - Pyright: `venvPath = "."`, `venv = ".venv"`, `typeCheckingMode = "basic"`.
+- qBittorrent joins torrent tags with `", "` (comma+space) in `torrents_info` (e.g. `"added, processing"`); tag parsing must strip each item — `orchestrator._parse_tags()` is the single parsing point (a plain `split(",")` makes the `processing` guard never match and every cycle re-queues a processing torrent).
 - Logging has a `FATAL` level (value 60), custom `QBLogger`, JSON-structured format in production, thread-local `ContextFilter` for contextual fields, and `SensitiveDataFilter` for secrets.
 - Docker uses `python:3.14-slim-bookworm` with uv; run `docker build -t qb-monitor .` to build.
 - All qBittorrent API calls go through `_request()` with retry logic (exponential backoff, up to 30s cap) and circuit breaker protection.
 - Autorun for added/completed tags is configured automatically via API on startup — no manual qBittorrent config needed.
+- `deepseek-harness-sdk` is marked `sys_platform != 'win32'` (runtime-bin has no Windows wheel) — `main.py` imports it lazily inside the enabled-`organize` branch; Windows dev keeps `organize.enabled: false`.
+- `uv` cache may need `UV_CACHE_DIR` (e.g. `/tmp/uvcache`) when the default `/data/.cache/uv` is not writable.

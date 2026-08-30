@@ -85,6 +85,19 @@ class TestProcessTorrentsUnifiedEnqueue:
         assert task_queue.qsize() == 0
         client.add_torrents_tag.assert_not_called()
 
+    def test_processing_tag_with_space_separator_blocks_requeue(self):
+        # 回归：qBittorrent 多标签返回 ", "（逗号+空格），旧实现 split(",") 会产生
+        # 带前导空格的 ' processing'，'processing' in tag_set 恒为 False →
+        # 处理中的种子每个轮询周期被重复入队（长耗时处理器如 organize 必现）
+        t = make_torrent(tags="added, processing")
+        orch, client, task_queue = make_orchestrator([t])
+        orch.register_handler("added", lambda x: None)
+
+        orch._process_torrents()
+
+        assert task_queue.qsize() == 0
+        client.add_torrents_tag.assert_not_called()
+
     def test_torrent_with_two_trigger_tags_enqueued_once(self):
         t = make_torrent(tags="added,completed")
         orch, client, task_queue = make_orchestrator([t])
@@ -181,6 +194,17 @@ class TestDispatch:
         added_handler.assert_called_once()
         completed_handler.assert_not_called()
         client.remove_torrents_tag.assert_called_once_with(hashes=task.hash, tag="added")
+
+    def test_spaced_tags_dispatch_matches_exactly(self):
+        # 回归：qBittorrent 的 ", "（逗号+空格）分隔，逐项去空白后精确匹配
+        orch, client, _ = make_orchestrator([])
+        handler = MagicMock()
+        orch.register_handler("added", handler)
+
+        orch.dispatch(make_torrent(tags=" completed , added "))
+
+        handler.assert_called_once()
+        client.remove_torrents_tag.assert_called_once_with(hashes="abcdef1234567890", tag="added")
 
     def test_unknown_task_type_ignored(self):
         orch, _, _ = make_orchestrator([])

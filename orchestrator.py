@@ -16,6 +16,14 @@ TorrentHandler = Callable[[TorrentDictionary], None]
 BatchHandler = Callable[[dict], None]
 
 
+def _parse_tags(tags: str | None) -> set[str]:
+    """qBittorrent 用 ', '（逗号+空格）连接多标签（如 "added, processing"），
+    必须逐项去空白后才能精确匹配——否则 ' processing' 带前导空格，
+    'processing' in tag_set 恒为 False，processing 保护性判定失效导致重复入队。
+    """
+    return {t.strip() for t in (tags or "").split(",") if t.strip()}
+
+
 class TorrentOrchestrator:
     def __init__(
         self,
@@ -64,7 +72,7 @@ class TorrentOrchestrator:
         logger.warning("Unknown task type: %s", type(task).__name__)
 
     def _dispatch_torrent(self, task: TorrentDictionary) -> None:
-        tag_set = set(task.tags.split(",")) if task.tags else set()
+        tag_set = _parse_tags(task.tags)
         # 注册顺序首个命中（种子同时带多个触发标签属异常态，仅入队处理一次）
         tag = next((t for t in self._dispatcher if t in tag_set), None)
         if tag is None:
@@ -140,7 +148,7 @@ class TorrentOrchestrator:
             for t in all_torrents:
                 state = t.state
                 is_metadata = t.has_metadata
-                tag_set = set(t.tags.split(",")) if t.tags else set()
+                tag_set = _parse_tags(t.tags)
 
                 # Count all downloading-type and collect for monitoring
                 if state in ("downloading", "metaDL", "stalledDL", "forcedDL", "queuedDL"):

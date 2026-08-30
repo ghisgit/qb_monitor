@@ -16,7 +16,41 @@ category_tags:
     "^movies": "电影" # 示例：分类 movies、movies/4K 均命中
     "^anime": ["动漫", "追番"] # 示例：一次打两个标签
   completed: # 完成清理完成后应用
-    "^tv": "剧集" # 示例：分类 tv、tv/纪录片 等命中
+    "^tv": "organize" # 示例：tv 类完成后打入 organize 标签（触发下面组织处理器）
+
+# organize 组织处理器（可选）：打上触发标签的种子完成后，由 DeepSeek Harness agent
+# 识别发布名并匹配 TMDB 元数据，再按 Jellyfin 官方推荐目录结构硬链接到媒体库（失败回退拷贝）
+# 依赖 deepseek-harness-sdk（无 Windows 平台运行时；Windows 下请保持 enabled: false 或使用 Docker）
+# 省略本节或 enabled: false 即停用
+organize:
+  enabled: true
+  tags: ["organize"] # 触发标签（可多个；轮询自动识别，零轮询改动）
+  library:
+    movies_dir: "/media/movies" # 电影根目录
+    tv_dir: "/media/tv" # 剧集根目录
+    fallback_dir: "/media/unmatched" # AI 识别失败/未匹配时的镜像兜底目录（保持种子原始结构）
+  tmdb_api_key: "your-tmdb-v3-api-key" # TMDB API Key（经环境变量注入 agent，不进入提示词）
+  on_exists: "skip" # 目标文件已存在：skip=跳过 / overwrite=删除后重建
+  on_match_failure: "fallback" # AI 匹配失败：fallback=镜像进 fallback_dir / fail=保留触发标签报错重试
+  ai_retries: 1 # 单个种子 AI 瞬时失败的进程内重试次数
+  min_file_size_mb: 0 # 小于该大小的视频文件跳过（防止样本/缩略图入库）
+  include_episode_title: false # true=文件名附加 TMDB 单集标题
+  include_tmdb_id: true # true=目录/文件名附加 [tmdbid-xxxx]（Jellyfin provider-id 后缀）
+  video_extensions:
+    - ".mp4"
+    - ".mkv"
+    - ".avi"
+    - ".ts"
+    - ".m2ts"
+    - ".wmv"
+    - ".iso"
+  dsh: # DeepSeek Harness runtime 参数
+    model: "deepseek-v4-flash" # 模型 ID
+    api_key: "" # 留空则使用环境变量 DEEPSEEK_API_KEY
+    base_url: "" # 留空则使用环境变量 DEEPSEEK_BASE_URL
+    language: "zh-CN" # TMDB 搜索语言与标题本地化语言
+    request_timeout_seconds: 300 # 单个种子 AI 轮次超时（秒）
+    session_root: "sessions" # agent 会话 JSONL 存储目录（.gitignore 已排除）
 
 # qBittorrent WebUI 连接配置
 qbittorrent:

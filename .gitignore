@@ -4,6 +4,9 @@ config.yaml
 # 日志
 logs/
 
+# DSH agent 会话（organize 处理器）
+sessions/
+
 # Python 编译缓存
 __pycache__/
 *.py[cod]

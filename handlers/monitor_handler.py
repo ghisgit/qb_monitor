@@ -25,7 +25,9 @@ class MonitorHandler:
                 if t.hash in self._tracker:
                     _first_seen, last_progress = self._tracker[t.hash]
                     if progress > last_progress + 1e-6:
-                        self.logger.debug("Stall timer reset for %s: progress %.2f → %.2f", t.hash[:8], last_progress, progress)
+                        self.logger.debug(
+                            "Stall timer reset for %s: progress %.2f → %.2f", t.hash[:8], last_progress, progress
+                        )
                         self._tracker[t.hash] = (now, progress)
                 else:
                     self.logger.debug("Tracking %s (%s)", t.hash[:8], t.name)
