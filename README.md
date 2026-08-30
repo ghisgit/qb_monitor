@@ -36,12 +36,11 @@ qBittorrent 添加种子
         ▼
   Shell 脚本打标签 ──→ added
         │                    │
-        │            Orchestrator 轮询检测
+        │     Orchestrator 轮询检测（命中任一触发标签
+        │        且 有元数据 且 无 processing）
         │                    │
-        │              添加 processing 标签
-        │              移除 added 标签
-        │                    │
-        │              放入任务队列
+        │              批量添加 processing 标签
+        │              统一放入任务队列（不移除触发标签）
         │                    │
         │         ┌──────────┴──────────┐
         │         ▼                     ▼
@@ -52,12 +51,7 @@ qBittorrent 添加种子
         │         │                     │
         │         │              Shell 脚本打标签 ──→ completed
         │         │                                  │
-        │         │                          Orchestrator 轮询检测
-        │         │                                  │
-        │         │                            添加 processing 标签
-        │         │                            移除 completed 标签
-        │         │                                  │
-        │         │                            放入任务队列
+        │         │        Orchestrator 轮询检测（同上，统一入队）
         │         │                                  │
         │         │                                  ▼
         │         │                          CompletedHandler
@@ -67,7 +61,11 @@ qBittorrent 添加种子
         │         │                                  │
         │         └──────────────────────────────────┘
         │                     │
-        │              移除 processing 标签
+        │          handler 成功后由 Orchestrator
+        │          移除触发标签（失败则保留，下轮重试）
+        │                     │
+        │          Post 链（仅 enable_post_chain 标签）
+        │          CategoryTagHandler 按分类补打标签
         │                     │
         ▼                     ▼
        完成 ✅
@@ -147,7 +145,8 @@ logging:
 | 配置项                            | 类型      | 说明                                                      |
 | --------------------------------- | --------- | --------------------------------------------------------- |
 | `rules.added`                     | list[str] | 添加时文件名匹配规则（正则表达式），匹配的文件设为不下载  |
-| `rules.completed`                 | list[str] | 完成后文件/目录名匹配规则（正则表达式），匹配的项将被删除 |
+| `rules.completed`                 | list[str] | 完成后文件/目录名匹配规则（正则表达式），匹配的项将被删除 |
+| `category_tags`                   | dict[str, str \| list[str]] | 可选；added/completed 动作完成后按 qB 分类（Category）精确匹配补打标签，省略或为空则不启用 |
 | `qbittorrent.host`                | str       | qBittorrent Web UI 地址                                   |
 | `qbittorrent.username`            | str       | Web UI 用户名                                             |
 | `qbittorrent.password`            | str       | Web UI 密码                                               |
@@ -231,7 +230,8 @@ qb_monitor/
 ├── orchestrator.py          # 编排器：轮询种子、任务分发、卡顿降级、异常恢复
 ├── handlers/
 │   ├── base_handler.py      # 处理器基类：规则匹配、标签清理
-│   ├── added_handler.py     # 添加处理器：跳过匹配规则的文件
+│   ├── added_handler.py     # 添加处理器：跳过匹配规则的文件
+│   ├── category_tag_handler.py # 分类标签处理器：post 链按 qB 分类补打标签
 │   ├── completed_handler.py # 完成处理器：删除无用文件和空目录
 │   └── monitor_handler.py   # 监控处理器：追踪卡顿种子，超时降级
 ├── Dockerfile               # Docker 构建文件
@@ -243,7 +243,7 @@ qb_monitor/
 
 ### 核心模块说明
 
-**Orchestrator** — 生产者角色，定时轮询 qBittorrent 中所有种子，按标签分类后放入任务队列。同时收集活跃下载种子为监控批次，分发至 MonitorHandler。
+**Orchestrator** — 生产者角色，定时轮询 qBittorrent 中所有种子，命中任一注册触发标签（集合精确匹配）且有元数据的种子，批量打上 `processing` 标签后统一放入任务队列（不区分 added/completed，轮询阶段不移除触发标签）。同时收集活跃下载种子为监控批次，分发至 MonitorHandler。工作线程 dispatch 时按注册顺序首个命中的触发标签执行处理器，成功后由 Orchestrator 移除触发标签；失败则触发标签保留、下轮重新入队重试。成功后若该标签启用了 post 链（`enable_post_chain=True`），还会依次执行 post handlers（单点失败不影响后续）。
 
 **AddedHandler / CompletedHandler** — 消费者角色，工作线程从队列取出单个种子，执行文件跳过或清理操作，完成后自动清除 `processing` 标签。
 
@@ -252,17 +252,19 @@ qb_monitor/
 **标签状态机**：
 
 ```text
-added → processing → (处理完成，标签清除)
-completed → processing → (处理完成，标签清除)
-monitoring: 批次任务，不操作种子标签，仅追踪与降级
+added → processing → (处理成功，移除 added；失败则保留触发标签，下轮重试)
+completed → processing → (处理成功，移除 completed；失败则保留触发标签，下轮重试)
+monitoring: 批次任务，不操作种子标签，仅追踪与降级，不进 post 链
 ```
 
 ## 扩展 Handler
 
-项目采用注册式架构，添加新的处理器只需两步：
+项目采用标签驱动的注册式架构，添加新的触发标签处理器只需两步：
 
 1. 创建继承 `BaseHandler` 的处理器类，实现 `handle(self, task)` 方法
-2. 在 `main.py` 中注册：`orchestrator.register_handler("your_tag", your_handler.handle)`
+2. 在 `main.py` 中注册：`orchestrator.register_handler("your_tag", your_handler.handle)`；若需在处理成功后执行 post 链，传入 `enable_post_chain=True`；批量任务用 `orchestrator.register_batch_handler("name", handler.handle)` 注册，post 链用 `orchestrator.register_post_handler(handler.handle)` 注册
+
+触发标签由 Orchestrator 从注册表动态推导，新增标签无需改动轮询逻辑。
 
 示例：
 
@@ -282,7 +284,7 @@ class CustomHandler(BaseHandler):
 from handlers.custom_handler import CustomHandler
 
 custom_handler = CustomHandler(client, rules)
-orchestrator.register_handler("custom", custom_handler.handle)
+orchestrator.register_handler("custom", custom_handler.handle, enable_post_chain=True)
 ```
 
 同时在 qBittorrent 中添加对应的标签触发脚本即可。
