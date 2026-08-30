@@ -2,7 +2,7 @@ import queue
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import timedelta
 
 from qbittorrentapi import TorrentDictionary, TorrentInfoList
@@ -11,6 +11,9 @@ from client import QBittorrentClient
 from logger import ContextFilter, get_logger
 
 logger = get_logger(__name__)
+
+TorrentHandler = Callable[[TorrentDictionary], None]
+BatchHandler = Callable[[dict], None]
 
 
 class TorrentOrchestrator:
@@ -25,25 +28,97 @@ class TorrentOrchestrator:
         self.task_queue = task_queue
         self.poll_interval = poll_interval_seconds
         self.stall_timeout = timedelta(hours=stall_timeout_hours)
-        self._dispatcher: dict[str, Callable] = {}
+        self._dispatcher: dict[str, TorrentHandler] = {}  # 触发标签 → 种子处理器（注册顺序即优先级）
+        self._batch_dispatcher: dict[str, BatchHandler] = {}  # 批量任务名 → 处理器
+        self._post_handlers: list[tuple[TorrentHandler, frozenset[str] | None]] = []
+        self._post_tags: set[str] = set()  # 启用 post 链的触发标签
         self._stop_event = threading.Event()
 
-    def register_handler(self, tag: str, handler_fn: Callable):
+    def register_handler(self, tag: str, handler_fn: TorrentHandler, enable_post_chain: bool = False) -> None:
+        """注册触发标签处理器；enable_post_chain=True 时该标签处理成功后会执行 post 链。"""
         self._dispatcher[tag] = handler_fn
+        if enable_post_chain:
+            self._post_tags.add(tag)
+
+    def register_batch_handler(self, name: str, handler_fn: BatchHandler) -> None:
+        """注册批量任务处理器（dict 任务按 type 字段路由）。"""
+        self._batch_dispatcher[name] = handler_fn
+
+    def register_post_handler(self, handler_fn: TorrentHandler, tags: str | Iterable[str] | None = None) -> None:
+        """注册 post 链处理器，按注册顺序依次执行，单点失败不影响后续。
+
+        tags=None 时对所有启用 post 链的触发标签生效；
+        传入触发标签（字符串或可迭代）则仅在这些标签的处理成功后执行。
+        """
+        tag_filter = frozenset([tags]) if isinstance(tags, str) else frozenset(tags) if tags is not None else None
+        self._post_handlers.append((handler_fn, tag_filter))
 
     def dispatch(self, task):
-        if isinstance(task, dict) and task.get("type") == "monitoring":
-            self._dispatcher["monitoring"](task)
+        # TorrentDictionary 是 dict 子类，必须先判断种子任务再走批量路由
+        if isinstance(task, TorrentDictionary):
+            self._dispatch_torrent(task)
             return
-        if not isinstance(task, TorrentDictionary):
-            logger.warning("Unknown task type: %s", type(task).__name__)
+        if isinstance(task, dict):
+            self._dispatch_batch(task)
             return
-        for tag, handler_fn in self._dispatcher.items():
-            if tag in task.tags:
-                ContextFilter.set(operation=tag, torrent_hash=task.hash[:8], torrent_name=task.name)
-                handler_fn(task)
-                return
-        logger.warning("No handler for tags: %s", task.tags)
+        logger.warning("Unknown task type: %s", type(task).__name__)
+
+    def _dispatch_torrent(self, task: TorrentDictionary) -> None:
+        tag_set = set(task.tags.split(",")) if task.tags else set()
+        # 注册顺序首个命中（种子同时带多个触发标签属异常态，仅入队处理一次）
+        tag = next((t for t in self._dispatcher if t in tag_set), None)
+        if tag is None:
+            logger.warning("No handler for tags: %s", task.tags)
+            return
+
+        ContextFilter.set(operation=tag, torrent_hash=task.hash[:8], torrent_name=task.name)
+        # 异常不捕获、向上抛给 worker 记日志：失败 → 不移除触发标签、不跑 post 链，下轮重入队重试
+        self._dispatcher[tag](task)
+
+        self._remove_trigger_tag(task, tag)
+
+        if tag in self._post_tags:
+            self._run_post_handlers(task, tag)
+
+    def _dispatch_batch(self, task: dict) -> None:
+        name = task.get("type")
+        if not isinstance(name, str):
+            logger.warning("Batch task missing 'type' field: %s", task)
+            return
+        handler = self._batch_dispatcher.get(name)
+        if handler is None:
+            logger.warning("No batch handler for task type: %s", name)
+            return
+        ContextFilter.set(operation=name)
+        handler(task)
+
+    def _remove_trigger_tag(self, task: TorrentDictionary, tag: str) -> None:
+        """移除触发标签；失败仅 warning（下轮重入队重试，动作幂等）。"""
+        try:
+            self.client.remove_torrents_tag(hashes=task.hash, tag=tag)
+            logger.debug("Removed trigger tag '%s' from %s", tag, task.hash[:8])
+        except Exception as e:
+            logger.warning(
+                "Failed to remove trigger tag '%s' from %s: %s (will retry next cycle)",
+                tag,
+                task.hash[:8],
+                e,
+            )
+
+    def _run_post_handlers(self, task: TorrentDictionary, tag: str) -> None:
+        for post_fn, tag_filter in self._post_handlers:
+            if tag_filter is not None and tag not in tag_filter:
+                continue
+            try:
+                post_fn(task)
+            except Exception as e:
+                logger.error(
+                    "Post handler %s failed for %s: %s",
+                    getattr(post_fn, "__qualname__", repr(post_fn)),
+                    task.hash[:8],
+                    e,
+                    exc_info=True,
+                )
 
     def _process_torrents(self):
         cycle_id = uuid.uuid4().hex[:8]
@@ -54,8 +129,10 @@ class TorrentOrchestrator:
             all_torrents: TorrentInfoList = self.client.get_torrents()
             logger.debug("Cycle %s: fetched %d torrents", cycle_id, len(all_torrents))
 
-            added_torrents: list[TorrentDictionary] = []
-            completed_torrents: list[TorrentDictionary] = []
+            # 触发标签动态推导自注册表：新增标签只需 register_handler，零改动轮询逻辑
+            trigger_tags = set(self._dispatcher)
+            tag_hit_counts: dict[str, int] = {}
+            to_process: list[TorrentDictionary] = []
             monitoring_torrents: list[TorrentDictionary] = []
             downloading_count = 0
             now = time.time()
@@ -75,43 +152,29 @@ class TorrentOrchestrator:
                 if not is_metadata or "processing" in tag_set:
                     continue
 
-                # Tag-based classification for handler processing
-                if "added" in tag_set:
-                    added_torrents.append(t)
-                elif "completed" in tag_set:
-                    completed_torrents.append(t)
+                # 标签驱动统一入队：集合精确匹配（in 语义），不移除触发标签
+                hits = tag_set & trigger_tags
+                if hits:
+                    to_process.append(t)
+                    for tag in hits:
+                        tag_hit_counts[tag] = tag_hit_counts.get(tag, 0) + 1
 
+            hit_summary = ", ".join(f"{tag}={n}" for tag, n in tag_hit_counts.items()) or "none"
             logger.debug(
-                "Cycle summary: total=%d | added=%d | completed=%d | monitoring=%d | downloading_count=%d",
+                "Cycle summary: total=%d | queued=%d (%s) | monitoring=%d | downloading_count=%d",
                 len(all_torrents),
-                len(added_torrents),
-                len(completed_torrents),
+                len(to_process),
+                hit_summary,
                 len(monitoring_torrents),
                 downloading_count,
             )
 
-            if added_torrents:
-                added_hashes = [t.hash for t in added_torrents]
-                self.client.add_torrents_tag(hashes=added_hashes, tag="processing")
-
-                for t in added_torrents:
+            if to_process:
+                # 批量打 processing 防止下轮重复入队；触发标签由 dispatch 成功后统一移除
+                self.client.add_torrents_tag(hashes=[t.hash for t in to_process], tags="processing")
+                for t in to_process:
                     self.task_queue.put(t)
-
-                self.client.remove_torrents_tag(hashes=added_hashes, tag="added")
-                logger.info("Queued %d added torrents for processing", len(added_torrents))
-
-            if completed_torrents:
-                completed_hashes = [t.hash for t in completed_torrents]
-                self.client.add_torrents_tag(hashes=completed_hashes, tag="processing")
-
-                for t in completed_torrents:
-                    self.task_queue.put(t)
-
-                self.client.remove_torrents_tag(hashes=completed_hashes, tag="completed")
-                logger.info(
-                    "Queued %d completed torrents for processing",
-                    len(completed_torrents),
-                )
+                logger.info("Queued %d torrents for processing | %s", len(to_process), hit_summary)
 
             if monitoring_torrents:
                 demotion_threshold = self.client.get_max_active_downloads()
@@ -158,10 +221,10 @@ class TorrentOrchestrator:
                     completed_torrents.append(t.hash)
 
             if added_torrents:
-                self.client.add_torrents_tag(hashes=added_torrents, tag="added")
+                self.client.add_torrents_tag(hashes=added_torrents, tags="added")
                 logger.info("Recovered %d 'added' tasks", len(added_torrents))
             if completed_torrents:
-                self.client.add_torrents_tag(hashes=completed_torrents, tag="completed")
+                self.client.add_torrents_tag(hashes=completed_torrents, tags="completed")
                 logger.info("Recovered %d 'completed' tasks", len(completed_torrents))
 
             logger.info("Orphaned 'processing' tags cleaned up.")

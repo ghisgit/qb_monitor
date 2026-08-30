@@ -29,19 +29,20 @@ Run order: `ruff check .` → `ruff format . --check` → `pyright` → `pytest`
 ## Config
 
 - Copy `template_config.yaml` → `config.yaml` (gitignored) before running.
-- Config schema validated at startup in `main.py:13` — section top-level keys are mandatory.
+- Config schema validated at startup in `main.py` — section top-level keys are mandatory; `category_tags` is an optional section (when present: mapping of action `added`/`completed` → non-empty mapping of category regex → non-empty tag string or tag list; patterns must compile).
 - Logging uses a nested `logging` section (not flat `logfile`/`debug_mode`).
 
 ## Architecture
 
-- Tag-based state machine: `added → processing → (tag removed)`, same for `completed`.
-- Producer-consumer via `threading + queue.Queue`. Orchestrator polls qBittorrent, enqueues tasks; worker threads dispatch via registered handlers.
-- Three handlers registered in `main.py:93-95`: `added`, `completed`, `monitoring` (batch dict, not single torrent).
+- Tag-driven dispatch: trigger tags are derived dynamically from the handler registry; adding a new trigger tag needs only `register_handler` (zero polling changes).
+- Producer-consumer via `threading + queue.Queue`. Orchestrator polls qBittorrent; torrents with metadata, no `processing` tag and any registered trigger tag are batch-tagged `processing` and enqueued uniformly (trigger tags are NOT removed during polling).
+- Worker threads dispatch: dict tasks route through `_batch_dispatcher` by `type` key; torrent tasks run the first matching trigger-tag handler (registration order), then the orchestrator removes the trigger tag on success (kept on failure → retried next cycle), then runs the post chain if the tag opted in via `enable_post_chain=True`.
+- Four registrations in `main.py`: `added` / `completed` (both `enable_post_chain=True`), batch `monitoring` via `register_batch_handler`, and per-action post handlers `CategoryTagHandler.handle_added` / `.handle_completed` (tags torrents by qBittorrent Category via case-insensitive `re.search` regex rules; each torrent has at most one category and all matching patterns' tags are merged & deduped; post handlers may be scoped to trigger tags via `register_post_handler(fn, tags=...)`).
 - MonitorHandler tracks per-hash stall timestamps in-memory; lost on restart.
 
 ## Quirks / gotchas
 
-- 32 tests across 4 test files in `tests/`; run with `uv run pytest`.
+- 82 tests across 7 test files in `tests/`; run with `uv run pytest`.
 - Python requirement: `>=3.14` (per `pyproject.toml` and `.python-version`).
 - Ruff: `line-length = 120`, `quote-style = "double"`, target `py314`.
 - Pyright: `venvPath = "."`, `venv = ".venv"`, `typeCheckingMode = "basic"`.

@@ -129,8 +129,9 @@ class QBittorrentClient:
     def get_torrent_files(self, torrent_hash: str | None = None) -> TorrentFilesList:
         return self._request(self.client.torrents_files, torrent_hash=torrent_hash)
 
-    def add_torrents_tag(self, hashes: str | list[str], tag: str):
-        return self._request(self.client.torrents_add_tags, torrent_hashes=hashes, tags=tag)
+    def add_torrents_tag(self, hashes: str | list[str], tags: str | list[str]):
+        # qBittorrent API 原生接受逗号分隔字符串或列表，单标签调用保持兼容
+        return self._request(self.client.torrents_add_tags, torrent_hashes=hashes, tags=tags)
 
     def remove_torrents_tag(self, hashes: str | list[str], tag: str):
         return self._request(self.client.torrents_remove_tags, torrent_hashes=hashes, tags=tag)

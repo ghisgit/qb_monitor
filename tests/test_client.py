@@ -92,7 +92,7 @@ class TestRequest:
         client._request = _make_mock(return_value="ok")
         assert client.get_torrents() == "ok"
         assert client.get_torrent_files(torrent_hash="abc") == "ok"
-        assert client.add_torrents_tag(hashes=["a"], tag="t") == "ok"
+        assert client.add_torrents_tag(hashes=["a"], tags="t") == "ok"
         assert client.remove_torrents_tag(hashes=["a"], tag="t") == "ok"
         assert client.set_file_no_download(torrent_hash="a", file_ids=[1]) == "ok"
         assert client.move_to_bottom(hashes=["a"]) == "ok"
