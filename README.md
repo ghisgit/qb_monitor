@@ -267,12 +267,13 @@ docker run -d \
   -e DEEPSEEK_API_KEY=sk-xxx \                 # 启用 organize 时需要
   -v /path/to/config.yaml:/app/config.yaml \
   -v /path/to/logs:/app/logs \
+  -v /path/to/state:/app/state \               # organize 索引持久化（重建容器后不重复 AI 匹配）
   -v /path/to/downloads:/downloads \            # 启用 organize 时挂载下载目录
   -v /path/to/media:/media \                    # 启用 organize 时挂载媒体库目录
   ghcr.io/ghisgit/qb_monitor:latest
 ```
 
-> 注意：镜像包含 DeepSeek Harness bundled runtime（约 210MB），体积较大；organize 的 agent 会话 JSONL 默认写入 `/app/sessions`（已在 `.gitignore` 中排除），如需持久化可挂载该目录。
+> 注意：镜像包含 DeepSeek Harness bundled runtime（约 210MB），体积较大；organize 的 agent 会话 JSONL 默认写入 `/app/sessions`，整理索引写入 `/app/state`（两者均已在 `.gitignore` 中排除），如需持久化请挂载这两个目录。
 
 如需本地构建：
 
