@@ -140,6 +140,13 @@ def _validate_organize(data: dict) -> None:
     if not isinstance(tmdb_key, str) or not tmdb_key.strip():
         raise ValueError("organize.tmdb_api_key must be a non-empty string")
 
+    tmdb_proxy = organize.get("tmdb_proxy", "")
+    if tmdb_proxy:
+        if not isinstance(tmdb_proxy, str):
+            raise ValueError("organize.tmdb_proxy must be a string")
+        if not tmdb_proxy.strip() or not tmdb_proxy.strip().startswith(("http://", "https://")):
+            raise ValueError("organize.tmdb_proxy must start with http:// or https://")
+
     ai_retries = organize.get("ai_retries", 1)
     if not isinstance(ai_retries, int) or isinstance(ai_retries, bool) or ai_retries < 0:
         raise ValueError("organize.ai_retries must be a non-negative integer")
@@ -250,6 +257,7 @@ def main():
         matcher = DeepSeekMatcher(
             MatcherConfig(
                 tmdb_api_key=organize_cfg["tmdb_api_key"],
+                tmdb_proxy=organize_cfg.get("tmdb_proxy", "") or "",
                 model=dsh_cfg.get("model", "deepseek-v4-flash"),
                 api_key=dsh_cfg.get("api_key") or None,
                 base_url=dsh_cfg.get("base_url") or None,

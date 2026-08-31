@@ -54,6 +54,7 @@ class MatcherConfig:
     """匹配器配置（来源于 config.yaml 的 organize 节）。"""
 
     tmdb_api_key: str = ""
+    tmdb_proxy: str = ""  # TMDB HTTP 代理（如 http://192.168.0.88:7890），空=直连
     model: str = DEFAULT_MODEL
     api_key: str | None = None  # 留空继承环境变量 DEEPSEEK_API_KEY
     base_url: str | None = None  # 留空继承环境变量 DEEPSEEK_BASE_URL
@@ -82,12 +83,14 @@ _PROMPT_TEMPLATE = """你是媒体库整理识别器。唯一任务：分析下�
 {file_list}
 
 ## TMDB 查询方法
-API Key 在环境变量 TMDB_API_KEY 中（不要在输出、命令或回显中泄露它）。用 Bash 调用 TMDB API v3：
-- 电影: GET https://api.themoviedb.org/3/search/movie?api_key=$TMDB_API_KEY&language={language}&query=标题&year=年份
-- 剧集: GET https://api.themoviedb.org/3/search/tv?api_key=$TMDB_API_KEY&language={language}&query=标题&first_air_date_year=年份
-- 剧集单集标题（可选）: GET https://api.themoviedb.org/3/tv/{{id}}/season/{{n}}?api_key=$TMDB_API_KEY&language={language}
-若系统没有 curl，用 python3 标准库 urllib 发起请求。标题使用 TMDB 返回的本地化 title/name 字段（language={language}）。
-
+系统没有 curl，用 python3 标准库 urllib 发起请求；每次 Bash 调用都是无状态的新 shell，
+key 读取与请求必须写在同一段脚本里。API Key 优先取环境变量 TMDB_API_KEY；
+若该变量不存在，从 config.yaml 的 organize.tmdb_api_key 读取（绝对不要在输出、命令或回显中泄露它）。
+端点（TMDB API v3，标题使用 TMDB 返回的本地化 title/name 字段，language={language}）：
+- 搜索电影: https://api.themoviedb.org/3/search/movie?api_key=...&language={language}&query=标题&year=年份
+- 搜索剧集: https://api.themoviedb.org/3/search/tv?api_key=...&language={language}&query=标题&first_air_date_year=年份
+- 剧集单集标题（可选）: https://api.themoviedb.org/3/tv/{{id}}/season/{{n}}?api_key=...&language={language}
+{tmdb_network_hint}
 ## 判定规则
 1. 发布名里的标题/年份/季集数需先剥离发布组、清晰度、编码等噪音再用于搜索。
 2. kind=movie：电影种子，files 列出全部需要整理的视频文件，每项只需 "file" 字段。
@@ -106,6 +109,16 @@ _CORRECTIVE_PROMPT = (
     "你上一条回复不是合法的 JSON。请立即重新输出：只输出一个 JSON 对象（结构与上面给你的"
     "输出格式完全一致），不要包含任何解释、代码栅栏、markdown、前后缀或其它文字。"
 )
+
+# 配置了 tmdb_proxy 时注入 prompt 的网络要点（tmdb_proxy 经 .format 填入，故花括号双写）。
+_PROXY_HINT_TEMPLATE = """## 网络要点（重要）
+api.themoviedb.org 直连不可达，所有请求必须经 HTTP 代理 {tmdb_proxy} 访问，直接照抄此配方：
+  import urllib.request
+  proxy = urllib.request.ProxyHandler({{"https": "{tmdb_proxy}", "http": "{tmdb_proxy}"}})
+  opener = urllib.request.build_opener(proxy)
+  with opener.open("https://api.themoviedb.org/3/search/tv?...", timeout=30) as r:
+      data = json.load(r)
+不要尝试直连，不要探测网络、端口或寻找其他出口。"""
 
 
 class DeepSeekMatcher:
@@ -208,11 +221,13 @@ class DeepSeekMatcher:
     def _build_prompt(self, context: dict) -> str:
         files = context.get("files") or []
         file_list = "\n".join(f"  - {f['file']} | {f.get('size', 0)}" for f in files) or "  - (无)"
+        network_hint = _PROXY_HINT_TEMPLATE.format(tmdb_proxy=self.cfg.tmdb_proxy) if self.cfg.tmdb_proxy else ""
         return _PROMPT_TEMPLATE.format(
             name=context.get("name", ""),
             category=context.get("category") or "(无)",
             file_list=file_list,
             language=self.cfg.language,
+            tmdb_network_hint=network_hint,
         )
 
     @staticmethod

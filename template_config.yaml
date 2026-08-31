@@ -30,6 +30,7 @@ organize:
     tv_dir: "/media/tv" # 剧集根目录
     fallback_dir: "/media/unmatched" # AI 识别失败/未匹配时的镜像兜底目录（保持种子原始结构）
   tmdb_api_key: "your-tmdb-v3-api-key" # TMDB API Key（经环境变量注入 agent，不进入提示词）
+  tmdb_proxy: "" # TMDB HTTP 代理（如 http://192.168.0.88:7890），留空=直连；配置后注入 prompt 教 agent 走代理
   on_exists: "skip" # 目标文件已存在：skip=跳过 / overwrite=删除后重建
   on_match_failure: "fallback" # AI 匹配失败：fallback=镜像进 fallback_dir / fail=保留触发标签报错重试
   ai_retries: 1 # 单个种子 AI 瞬时失败的进程内重试次数

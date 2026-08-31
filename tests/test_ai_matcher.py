@@ -282,8 +282,35 @@ class TestPrompt:
         prompt, _session_id = harness_calls(matcher)[0]
         assert "Movie.Name.2023.1080p.mkv" in prompt
         assert "tmdb-secret" not in prompt
-        assert "$TMDB_API_KEY" in prompt
+        assert "TMDB_API_KEY" in prompt
         assert "movies" in prompt
+
+    def test_prompt_has_no_curl_and_uses_urllib(self):
+        matcher = make_matcher([response(MOVIE_RESPONSE)])
+        matcher.match(VALID_CONTEXT)
+        prompt, _ = harness_calls(matcher)[0]
+        # 明确告知无 curl，且不提供任何 curl 命令示例（"curl:" 这类用法）
+        assert "没有 curl" in prompt
+        assert "curl -" not in prompt
+        assert "urllib" in prompt
+        # key 兜底：env 缺失时从 config.yaml 读取
+        assert "organize.tmdb_api_key" in prompt
+
+    def test_prompt_without_proxy_has_no_hint(self):
+        matcher = make_matcher([response(MOVIE_RESPONSE)])
+        matcher.match(VALID_CONTEXT)
+        prompt, _ = harness_calls(matcher)[0]
+        assert "ProxyHandler" not in prompt
+        assert "网络要点" not in prompt
+
+    def test_prompt_with_proxy_contains_recipe(self):
+        matcher = make_matcher([response(MOVIE_RESPONSE)], tmdb_proxy="http://192.168.0.88:7890")
+        matcher.match(VALID_CONTEXT)
+        prompt, _ = harness_calls(matcher)[0]
+        assert "网络要点" in prompt
+        assert "http://192.168.0.88:7890" in prompt
+        assert 'ProxyHandler({"https": "http://192.168.0.88:7890"' in prompt
+        assert "不要尝试直连" in prompt
 
     def test_session_ids_unique_and_prefixed(self):
         matcher = make_matcher([response(MOVIE_RESPONSE), response(MOVIE_RESPONSE)])
@@ -311,6 +338,11 @@ def test_matcher_config_validates_max_concurrent_sessions():
         MatcherConfig(tmdb_api_key="k", max_concurrent_sessions=0)
     with pytest.raises(ValueError, match="max_concurrent_sessions"):
         MatcherConfig(tmdb_api_key="k", max_concurrent_sessions=True)
+
+
+def test_matcher_config_accepts_empty_tmdb_proxy():
+    cfg = MatcherConfig(tmdb_api_key="k")
+    assert cfg.tmdb_proxy == ""
 
 
 def test_close_is_safe_before_start():

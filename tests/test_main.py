@@ -233,3 +233,20 @@ class TestOrganizeValidation:
             data["organize"]["dsh"]["max_concurrent_sessions"] = bad
             with pytest.raises(ValueError, match="max_concurrent_sessions"):
                 validate_config(data)
+
+    def test_empty_tmdb_proxy_passes(self):
+        data = organize_config()
+        data["organize"]["tmdb_proxy"] = ""
+        validate_config(data)
+
+    def test_valid_tmdb_proxy_passes(self):
+        data = organize_config()
+        data["organize"]["tmdb_proxy"] = "http://192.168.0.88:7890"
+        validate_config(data)
+
+    def test_invalid_tmdb_proxy_rejected(self):
+        for bad in ("192.168.0.88:7890", "ftp://x", 123):
+            data = organize_config()
+            data["organize"]["tmdb_proxy"] = bad
+            with pytest.raises(ValueError, match="tmdb_proxy"):
+                validate_config(data)

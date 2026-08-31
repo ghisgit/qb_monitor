@@ -189,6 +189,7 @@ logging:
 | `organize.library.tv_dir`         | str       | 剧集媒体库根目录                                          |
 | `organize.library.fallback_dir`   | str       | 识别失败/未匹配时的镜像兜底目录（保持种子原始结构）       |
 | `organize.tmdb_api_key`           | str       | TMDB API Key（注入 agent 环境变量，不进入提示词）         |
+| `organize.tmdb_proxy`             | str       | TMDB HTTP 代理（如 `http://192.168.0.88:7890`），留空=直连 |
 | `organize.on_exists`              | str       | 目标已存在：`skip`（默认）/ `overwrite`                   |
 | `organize.on_match_failure`       | str       | AI 匹配失败：`fallback`（默认，镜像进兜底目录）/ `fail`（保留触发标签报错重试） |
 | `organize.ai_retries`             | int       | 单个种子 AI 瞬时失败进程内重试次数，默认 1                |
@@ -227,6 +228,8 @@ logging:
 **失败语义**：AI 瞬时失败（超时/输出不合法）按 `ai_retries` 进程内重试；重试耗尽或 TMDB 无匹配 → `on_match_failure: fallback`（默认）把文件镜像进 `fallback_dir`（保留原始相对路径，不丢文件）或 `fail`（触发标签保留、下轮重试）。落盘具备幂等性（inode 相同即跳过），部分完成后重试安全。
 
 **并发模型**：AI 轮次在单一 runtime 进程内按 `max_concurrent_sessions` 并发执行多会话（有效并发 = min(该值, `processor.max_worker_threads`)）；槽位占满时种子**让位**（记 INFO，触发标签保留，下个轮询周期重试），不会阻塞 `added`/`completed`/`monitoring` 等其他处理器。AI 回复非 JSON 时在同一会话追加一次纠正追问（保留 TMDB 查询上下文）再提取。
+
+**网络受限环境**：若运行容器直连 `api.themoviedb.org` 不可达（防火墙 allowlist 等），配置 `organize.tmdb_proxy` 指向局域网内 HTTP 代理（如 Clash 的 `http://192.168.0.88:7890`）。代理地址会连同现成的 `urllib ProxyHandler` 配方注入 AI 提示词，agent 无需自行探测网络——否则每个种子的匹配都会浪费大量回合重复"发现代理"的过程。注意：DSH bash 工具环境变量会被清洗（`TMDB_API_KEY` 不一定可见），提示词已含「env 无 key 则从 config.yaml 读取」的兜底说明。
 
 **重复整理（已整理缓存）**：整理成功后，匹配计划（文件清单指纹 + AI 计划 + 目标路径）写入本地索引 `state/organize_index.json`（原子写入，已 gitignore）。同一种子再次打上触发标签时：
 
