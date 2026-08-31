@@ -130,6 +130,7 @@ class DeepSeekMatcher:
         # 同一 runtime 进程内允许多会话并发（SDK 按请求 id 路由响应，会话彼此隔离）；
         # 槽位占满时非阻塞让位（TaskDeferredError），不阻塞其他处理器的 worker。
         self._slots = threading.BoundedSemaphore(config.max_concurrent_sessions)
+        self._start_lock = threading.Lock()
         self._seq_lock = threading.Lock()
         self._seq = 0
         # runtime 进程懒启动：首次 match 时才拉起，close() 兜底回收
@@ -187,30 +188,38 @@ class DeepSeekMatcher:
 
         纠正追问保留会话上下文（agent 已完成 TMDB 查询），模型看到自己上一轮的散文后
         通常按要求重出 JSON；仍失败则以异常抛出，交由 :meth:`match` 走重试或兜底。
+        整个尝试（含纠正追问）持有同一并发槽位，避免纠正轮被其他种子挤占而丢失上下文。
         """
-        result = self._run_once(prompt, session_id)
-        try:
-            data = self._extract_json(result.final_response)
-        except ValueError:
-            self.logger.info(
-                "AI reply non-JSON for '%s' (session %s); sending corrective turn",
-                context.get("name", "?"),
-                session_id,
-            )
-            corrected = self._run_once(_CORRECTIVE_PROMPT, session_id)
-            data = self._extract_json(corrected.final_response)
-        return self._validate(data, context)
-
-    def _run_once(self, prompt: str, session_id: str):
         if not self._slots.acquire(blocking=False):
             raise TaskDeferredError(f"AI concurrent sessions full (max={self.cfg.max_concurrent_sessions})")
         try:
-            start = time.monotonic()
-            result = self._harness.run(prompt, session_id=session_id)
-            self.logger.debug("AI turn for session %s took %.1fs", session_id, time.monotonic() - start)
-            return result
+            result = self._run_turn(prompt, session_id)
+            try:
+                data = self._extract_json(result.final_response)
+            except ValueError:
+                self.logger.info(
+                    "AI reply non-JSON for '%s' (session %s); sending corrective turn",
+                    context.get("name", "?"),
+                    session_id,
+                )
+                corrected = self._run_turn(_CORRECTIVE_PROMPT, session_id)
+                data = self._extract_json(corrected.final_response)
+            return self._validate(data, context)
         finally:
             self._slots.release()
+
+    def _run_turn(self, prompt: str, session_id: str):
+        self._ensure_runtime()
+        start = time.monotonic()
+        result = self._harness.run(prompt, session_id=session_id)
+        self.logger.debug("AI turn for session %s took %.1fs", session_id, time.monotonic() - start)
+        return result
+
+    def _ensure_runtime(self) -> None:
+        # SDK 的 start()/initialize() 无锁：并发槽位 >1 时多个线程可能同时首次
+        # 进入（重复 spawn runtime 进程或互相 kill），首次启动必须串行化。
+        with self._start_lock:
+            self._harness.start()
 
     def _next_session_id(self, context: dict) -> str:
         with self._seq_lock:

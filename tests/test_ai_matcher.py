@@ -30,6 +30,9 @@ class FakeHarness:
         self.results = list(results)
         self.calls = []
 
+    def start(self):
+        pass
+
     def run(self, prompt, session_id=None):
         self.calls.append((prompt, session_id))
         item = self.results.pop(0)
@@ -199,6 +202,9 @@ class TestRetries:
             def __init__(self):
                 self.entered = threading.Event()
 
+            def start(self):
+                pass
+
             def run(self, prompt, session_id=None):
                 self.entered.set()
                 release.wait(5)
@@ -228,6 +234,9 @@ class TestRetries:
         barrier = threading.Barrier(2, timeout=5)
 
         class BarrierHarness:
+            def start(self):
+                pass
+
             def run(self, prompt, session_id=None):
                 # 仅当两个 AI 轮次真正并发时，两个线程才能同时到达 Barrier
                 barrier.wait()
