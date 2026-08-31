@@ -1,8 +1,10 @@
+import threading
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
+from core.models import TaskDeferredError
 from handlers.organize.matcher import DeepSeekMatcher, MatcherConfig, MatchError, PlanFile
 
 MOVIE_RESPONSE = (
@@ -183,6 +185,73 @@ class TestRetries:
         plan = matcher.match(VALID_CONTEXT)
         assert plan.title == "Movie Name"
 
+    def test_task_deferred_bypasses_retry_loop(self):
+        matcher = make_matcher([TaskDeferredError("busy"), TaskDeferredError("busy")], ai_retries=2)
+        with pytest.raises(TaskDeferredError):
+            matcher.match(VALID_CONTEXT)
+        # 让位不消耗重试次数：仅一次调用
+        assert len(harness_calls(matcher)) == 1
+
+    def test_busy_slot_defers_instead_of_blocking(self):
+        release = threading.Event()
+
+        class SlowHarness:
+            def __init__(self):
+                self.entered = threading.Event()
+
+            def run(self, prompt, session_id=None):
+                self.entered.set()
+                release.wait(5)
+                return response(MOVIE_RESPONSE)
+
+        matcher = make_matcher([], max_concurrent_sessions=1)
+        harness = SlowHarness()
+        matcher._harness = cast(Any, harness)
+        errors: list = []
+
+        def worker():
+            try:
+                matcher.match(VALID_CONTEXT)
+            except Exception as e:
+                errors.append(e)
+
+        t = threading.Thread(target=worker)
+        t.start()
+        assert harness.entered.wait(5)  # worker 已占用唯一槽位
+        with pytest.raises(TaskDeferredError):
+            matcher.match(VALID_CONTEXT)
+        release.set()
+        t.join(timeout=5)
+        assert errors == []
+
+    def test_concurrent_sessions_run_in_parallel(self):
+        barrier = threading.Barrier(2, timeout=5)
+
+        class BarrierHarness:
+            def run(self, prompt, session_id=None):
+                # 仅当两个 AI 轮次真正并发时，两个线程才能同时到达 Barrier
+                barrier.wait()
+                return response(MOVIE_RESPONSE)
+
+        matcher = make_matcher([], max_concurrent_sessions=2)
+        matcher._harness = cast(Any, BarrierHarness())
+        results: list = []
+
+        def run_match():
+            try:
+                results.append(matcher.match(VALID_CONTEXT))
+            except Exception as e:  # noqa: BLE001
+                results.append(e)
+
+        threads = [threading.Thread(target=run_match) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+        assert len(results) == 2
+        for r in results:
+            assert r.title == "Movie Name"
+
     def test_non_json_output_raises_match_error(self):
         matcher = make_matcher(
             [response("这个种子看起来是一部 2023 年的电影。"), response("我也不清楚，无法输出。")],
@@ -235,6 +304,13 @@ class TestPrompt:
 def test_matcher_config_requires_tmdb_key():
     with pytest.raises(ValueError):
         MatcherConfig(tmdb_api_key="")
+
+
+def test_matcher_config_validates_max_concurrent_sessions():
+    with pytest.raises(ValueError, match="max_concurrent_sessions"):
+        MatcherConfig(tmdb_api_key="k", max_concurrent_sessions=0)
+    with pytest.raises(ValueError, match="max_concurrent_sessions"):
+        MatcherConfig(tmdb_api_key="k", max_concurrent_sessions=True)
 
 
 def test_close_is_safe_before_start():

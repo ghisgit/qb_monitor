@@ -12,7 +12,7 @@ from qbittorrentapi import TorrentDictionary
 from core.breaker import CircuitBreakerConfig, RetryConfig
 from core.client import QBittorrentClient
 from core.logger import ContextFilter, get_logger, setup_logging
-from core.models import MatchRule
+from core.models import MatchRule, TaskDeferredError
 from core.orchestrator import TorrentOrchestrator
 from handlers.added import AddedHandler
 from handlers.category_tag import CategoryTagHandler
@@ -165,6 +165,10 @@ def _validate_organize(data: dict) -> None:
     if "session_root" in dsh and (not isinstance(dsh["session_root"], str) or not dsh["session_root"].strip()):
         raise ValueError("organize.dsh.session_root must be a non-empty string")
 
+    max_sessions = dsh.get("max_concurrent_sessions", 1)
+    if not isinstance(max_sessions, int) or isinstance(max_sessions, bool) or max_sessions < 1:
+        raise ValueError("organize.dsh.max_concurrent_sessions must be a positive integer")
+
 
 def main():
     parser = argparse.ArgumentParser(description="QB Monitor — 自动监控 qBittorrent 的标签驱动工具")
@@ -235,6 +239,14 @@ def main():
             ) from e
 
         dsh_cfg = organize_cfg.get("dsh", {})
+        max_sessions = dsh_cfg.get("max_concurrent_sessions", 1)
+        if max_sessions > data["processor"]["max_worker_threads"]:
+            logger.warning(
+                "organize.dsh.max_concurrent_sessions (%d) > processor.max_worker_threads (%d): "
+                "实际 AI 并发受工作线程数限制",
+                max_sessions,
+                data["processor"]["max_worker_threads"],
+            )
         matcher = DeepSeekMatcher(
             MatcherConfig(
                 tmdb_api_key=organize_cfg["tmdb_api_key"],
@@ -245,6 +257,7 @@ def main():
                 request_timeout_seconds=dsh_cfg.get("request_timeout_seconds", 300),
                 session_root=dsh_cfg.get("session_root", "sessions"),
                 ai_retries=organize_cfg.get("ai_retries", 1),
+                max_concurrent_sessions=max_sessions,
             )
         )
         organize_index = OrganizeIndex(Path("state") / "organize_index.json")
@@ -278,6 +291,12 @@ def main():
                         torrent_name=task.name,
                     )
                 orchestrator.dispatch(task)
+            except TaskDeferredError as e:
+                # 让位（如 AI 槽位占满）：INFO 且不记栈，触发标签保留、下轮重入队
+                if isinstance(task, TorrentDictionary):
+                    logger.info("Deferred '%s' (%s): %s — will retry next cycle", task.name, task.hash[:8], e)
+                else:
+                    logger.info("Deferred task: %s", e)
             except Exception as e:
                 if isinstance(task, dict):
                     logger.error("MonitorHandler error: %s", e, exc_info=True)

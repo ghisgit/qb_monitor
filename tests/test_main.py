@@ -221,3 +221,15 @@ class TestOrganizeValidation:
         data["organize"]["dsh"]["base_url"] = 123
         with pytest.raises(ValueError, match="base_url"):
             validate_config(data)
+
+    def test_valid_max_concurrent_sessions_passes(self):
+        data = organize_config()
+        data["organize"]["dsh"]["max_concurrent_sessions"] = 2
+        validate_config(data)
+
+    def test_invalid_max_concurrent_sessions_rejected(self):
+        for bad in (0, -1, "2", True, 1.5):
+            data = organize_config()
+            data["organize"]["dsh"]["max_concurrent_sessions"] = bad
+            with pytest.raises(ValueError, match="max_concurrent_sessions"):
+                validate_config(data)

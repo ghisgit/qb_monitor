@@ -8,12 +8,14 @@
 import json
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import TypeGuard
 
 from deepseek_harness import DeepSeekHarness, DeepSeekHarnessConfig
 
 from core.logger import get_logger
+from core.models import TaskDeferredError
 
 logger = get_logger(__name__)
 
@@ -59,10 +61,15 @@ class MatcherConfig:
     request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS
     session_root: str = "sessions"
     ai_retries: int = 1
+    max_concurrent_sessions: int = 1
 
     def __post_init__(self):
         if not self.tmdb_api_key or not self.tmdb_api_key.strip():
             raise ValueError("MatcherConfig.tmdb_api_key is required (organize.tmdb_api_key)")
+        if not isinstance(self.max_concurrent_sessions, int) or isinstance(self.max_concurrent_sessions, bool):
+            raise ValueError("max_concurrent_sessions must be an integer")
+        if self.max_concurrent_sessions < 1:
+            raise ValueError("max_concurrent_sessions must be >= 1")
 
 
 _PROMPT_TEMPLATE = """你是媒体库整理识别器。唯一任务：分析下面这个 BT 种子的发布名与文件列表，\
@@ -107,7 +114,9 @@ class DeepSeekMatcher:
     def __init__(self, config: MatcherConfig):
         self.cfg = config
         self.logger = get_logger(self.__class__.__name__)
-        self._lock = threading.Lock()
+        # 同一 runtime 进程内允许多会话并发（SDK 按请求 id 路由响应，会话彼此隔离）；
+        # 槽位占满时非阻塞让位（TaskDeferredError），不阻塞其他处理器的 worker。
+        self._slots = threading.BoundedSemaphore(config.max_concurrent_sessions)
         self._seq_lock = threading.Lock()
         self._seq = 0
         # runtime 进程懒启动：首次 match 时才拉起，close() 兜底回收
@@ -144,6 +153,9 @@ class DeepSeekMatcher:
                     session_id,
                 )
                 return plan
+            except TaskDeferredError:
+                # 并发槽位占满：整单让位、下轮询周期重试，不消耗重试次数
+                raise
             except Exception as e:  # 超时/协议错误/输出不合法均视为本轮失败
                 last_error = e
                 self.logger.warning(
@@ -177,8 +189,15 @@ class DeepSeekMatcher:
         return self._validate(data, context)
 
     def _run_once(self, prompt: str, session_id: str):
-        with self._lock:  # 单 runtime 进程，串行执行 AI 轮次
-            return self._harness.run(prompt, session_id=session_id)
+        if not self._slots.acquire(blocking=False):
+            raise TaskDeferredError(f"AI concurrent sessions full (max={self.cfg.max_concurrent_sessions})")
+        try:
+            start = time.monotonic()
+            result = self._harness.run(prompt, session_id=session_id)
+            self.logger.debug("AI turn for session %s took %.1fs", session_id, time.monotonic() - start)
+            return result
+        finally:
+            self._slots.release()
 
     def _next_session_id(self, context: dict) -> str:
         with self._seq_lock:

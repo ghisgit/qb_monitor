@@ -202,6 +202,7 @@ logging:
 | `organize.dsh.language`           | str       | TMDB 搜索与标题本地化语言，默认 `zh-CN`                   |
 | `organize.dsh.request_timeout_seconds` | number | 单个种子 AI 轮次超时（秒），默认 300                  |
 | `organize.dsh.session_root`       | str       | agent 会话 JSONL 存储目录，默认 `sessions`                |
+| `organize.dsh.max_concurrent_sessions` | int  | 同一 runtime 内并发 AI 会话数，默认 1（占满时种子让位、下轮重试） |
 
 ### 3.1 AI 整理处理器（organize）详解
 
@@ -224,6 +225,8 @@ logging:
 - 多个种子共享根目录（如种子 A/B 均以 `ab` 为根，合并下载到 `/downloads/ab`）时，**绝不使用 `content_path` 作为整理来源**（两个种子报告同一路径会误带对方文件）；只迭代本种子 `task.files` 的条目，天然隔离。
 
 **失败语义**：AI 瞬时失败（超时/输出不合法）按 `ai_retries` 进程内重试；重试耗尽或 TMDB 无匹配 → `on_match_failure: fallback`（默认）把文件镜像进 `fallback_dir`（保留原始相对路径，不丢文件）或 `fail`（触发标签保留、下轮重试）。落盘具备幂等性（inode 相同即跳过），部分完成后重试安全。
+
+**并发模型**：AI 轮次在单一 runtime 进程内按 `max_concurrent_sessions` 并发执行多会话（有效并发 = min(该值, `processor.max_worker_threads`)）；槽位占满时种子**让位**（记 INFO，触发标签保留，下个轮询周期重试），不会阻塞 `added`/`completed`/`monitoring` 等其他处理器。AI 回复非 JSON 时在同一会话追加一次纠正追问（保留 TMDB 查询上下文）再提取。
 
 **重复整理（已整理缓存）**：整理成功后，匹配计划（文件清单指纹 + AI 计划 + 目标路径）写入本地索引 `state/organize_index.json`（原子写入，已 gitignore）。同一种子再次打上触发标签时：
 

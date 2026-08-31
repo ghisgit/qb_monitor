@@ -51,6 +51,7 @@ organize:
     language: "zh-CN" # TMDB 搜索语言与标题本地化语言
     request_timeout_seconds: 300 # 单个种子 AI 轮次超时（秒）
     session_root: "sessions" # agent 会话 JSONL 存储目录（.gitignore 已排除）
+    max_concurrent_sessions: 1 # 同一 runtime 内并发 AI 会话数；占满时种子让位、下轮重试（建议 ≤ max_worker_threads）
 
 # qBittorrent WebUI 连接配置
 qbittorrent:
