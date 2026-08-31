@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from qbittorrentapi import APIError
 
-from _breaker import CircuitBreakerConfig, CircuitBreakerOpenError, RetryConfig
-from client import QBittorrentClient
+from core.breaker import CircuitBreakerConfig, CircuitBreakerOpenError, RetryConfig
+from core.client import QBittorrentClient
 
 
 def _make_mock(return_value="ok", side_effect=None):
@@ -17,8 +17,8 @@ def _make_mock(return_value="ok", side_effect=None):
 @pytest.fixture
 def client():
     with (
-        patch("client.Client") as mock_cls,
-        patch("client.time.sleep"),
+        patch("core.client.Client") as mock_cls,
+        patch("core.client.time.sleep"),
     ):
         mock_cls.return_value.auth_log_in = MagicMock()
         instance = QBittorrentClient(

@@ -3,7 +3,7 @@ from typing import Any, cast
 
 import pytest
 
-from ai_matcher import DeepSeekMatcher, MatcherConfig, MatchError, PlanFile
+from handlers.organize.matcher import DeepSeekMatcher, MatcherConfig, MatchError, PlanFile
 
 MOVIE_RESPONSE = (
     '```json\n{"kind": "movie", "title": "Movie Name", "year": 2023, "tmdb_id": 555,'

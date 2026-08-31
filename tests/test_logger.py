@@ -2,7 +2,7 @@ import json
 import logging
 from io import StringIO
 
-from logger import (
+from core.logger import (
     ContextFilter,
     QBLogger,
     SensitiveDataFilter,

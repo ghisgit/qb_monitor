@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 from qbittorrentapi import TorrentDictionary
 
-from handlers.category_tag_handler import CategoryTagHandler
+from handlers.category_tag import CategoryTagHandler
 
 
 def make_task(category: str | None = None, include_key: bool = True) -> TorrentDictionary:

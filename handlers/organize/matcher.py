@@ -13,7 +13,7 @@ from typing import TypeGuard
 
 from deepseek_harness import DeepSeekHarness, DeepSeekHarnessConfig
 
-from logger import get_logger
+from core.logger import get_logger
 
 logger = get_logger(__name__)
 

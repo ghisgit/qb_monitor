@@ -1,4 +1,4 @@
-from models import MatchRule
+from core.models import MatchRule
 
 
 class TestMatchRule:

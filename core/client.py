@@ -5,8 +5,8 @@ from typing import Any
 import requests
 from qbittorrentapi import APIError, Client, TorrentFilesList, TorrentInfoList
 
-from _breaker import CircuitBreaker, CircuitBreakerConfig, CircuitBreakerOpenError, RetryConfig
-from logger import get_logger
+from core.breaker import CircuitBreaker, CircuitBreakerConfig, CircuitBreakerOpenError, RetryConfig
+from core.logger import get_logger
 
 logger = get_logger(__name__)
 

@@ -1,7 +1,7 @@
 import threading
 import time
 
-from _breaker import CircuitBreaker, CircuitBreakerConfig, CircuitBreakerOpenError
+from core.breaker import CircuitBreaker, CircuitBreakerConfig, CircuitBreakerOpenError
 
 
 class TestCircuitBreaker:

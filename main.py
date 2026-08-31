@@ -8,15 +8,15 @@ from pathlib import Path
 import yaml
 from qbittorrentapi import TorrentDictionary
 
-from _breaker import CircuitBreakerConfig, RetryConfig
-from client import QBittorrentClient
-from handlers.added_handler import AddedHandler
-from handlers.category_tag_handler import CategoryTagHandler
-from handlers.completed_handler import CompletedHandler
-from handlers.monitor_handler import MonitorHandler
-from logger import ContextFilter, get_logger, setup_logging
-from models import MatchRule
-from orchestrator import TorrentOrchestrator
+from core.breaker import CircuitBreakerConfig, RetryConfig
+from core.client import QBittorrentClient
+from core.logger import ContextFilter, get_logger, setup_logging
+from core.models import MatchRule
+from core.orchestrator import TorrentOrchestrator
+from handlers.added import AddedHandler
+from handlers.category_tag import CategoryTagHandler
+from handlers.completed import CompletedHandler
+from handlers.monitor import MonitorHandler
 
 MANDATORY_SECTIONS = {
     "qbittorrent": ["host", "username", "password"],
@@ -221,9 +221,9 @@ def main():
     matcher = None
     if organize_cfg and organize_cfg.get("enabled"):
         try:
-            from ai_matcher import DeepSeekMatcher, MatcherConfig
-            from handlers.organize_handler import OrganizeHandler
-            from organize_index import OrganizeIndex
+            from handlers.organize.handler import OrganizeHandler
+            from handlers.organize.index import OrganizeIndex
+            from handlers.organize.matcher import DeepSeekMatcher, MatcherConfig
         except ImportError as e:
             raise ValueError(
                 "organize 需要 deepseek-harness-sdk（无 Windows 平台运行时，请使用 Docker/Linux 或关闭 organize）"

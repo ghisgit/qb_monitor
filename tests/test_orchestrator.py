@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 from qbittorrentapi import TorrentDictionary
 
-from orchestrator import TorrentOrchestrator
+from core.orchestrator import TorrentOrchestrator
 
 
 def make_torrent(**kwargs) -> TorrentDictionary:

@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 import pytest
 from qbittorrentapi import TorrentDictionary
 
-from ai_matcher import MatchError, MatchPlan, PlanFile
-from handlers.organize_handler import OrganizeHandler
-from organize_index import OrganizeIndex
+from handlers.organize.handler import OrganizeHandler
+from handlers.organize.index import OrganizeIndex
+from handlers.organize.matcher import MatchError, MatchPlan, PlanFile
 
 
 class FakeFile:
@@ -123,7 +123,7 @@ class TestMovieSingleFile:
         def boom(*_args, **_kwargs):
             raise OSError(18, "Invalid cross-device link")  # EXDEV
 
-        monkeypatch.setattr("handlers.organize_handler.os.link", boom)
+        monkeypatch.setattr("handlers.organize.handler.os.link", boom)
         handler = make_handler(layout, StubMatcher(plan=movie_plan("Movie.2020.mkv", year=2020)))
         handler.handle(FakeTorrent("Movie.2020.mkv", layout.downloads, [FakeFile("Movie.2020.mkv")]))
 
@@ -447,7 +447,7 @@ class TestCachedPlan:
         def boom(*_args, **_kwargs):
             raise OSError(18, "Invalid cross-device link")  # EXDEV → 拷贝落盘
 
-        monkeypatch.setattr("handlers.organize_handler.os.link", boom)
+        monkeypatch.setattr("handlers.organize.handler.os.link", boom)
         handler.handle(task)
         dest = movie_dest(layout, "Movie Name", 2023, 555, "Movie Name (2023) [tmdbid-555].mkv")
         assert dest.is_file()

@@ -12,11 +12,11 @@ from pathlib import Path
 
 from qbittorrentapi import TorrentDictionary
 
-from ai_matcher import DeepSeekMatcher, MatchError, MatchPlan, PlanFile
-from handlers.base_handler import BaseHandler
-from logger import ContextFilter
-from media_naming import episode_destination, movie_destination
-from organize_index import OrganizeIndex
+from core.logger import ContextFilter
+from handlers.base import BaseHandler
+from handlers.organize.index import OrganizeIndex
+from handlers.organize.matcher import DeepSeekMatcher, MatchError, MatchPlan, PlanFile
+from handlers.organize.naming import episode_destination, movie_destination
 
 DEFAULT_VIDEO_EXTENSIONS = [".mp4", ".mkv", ".avi", ".ts", ".m2ts", ".wmv", ".iso"]
 

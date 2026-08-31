@@ -9,8 +9,8 @@
 import threading
 from dataclasses import dataclass
 
-from client import QBittorrentClient
-from logger import get_logger
+from core.client import QBittorrentClient
+from core.logger import get_logger
 
 
 @dataclass

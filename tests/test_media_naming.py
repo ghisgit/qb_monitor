@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from media_naming import (
+from handlers.organize.naming import (
     base_name,
     episode_code,
     episode_destination,

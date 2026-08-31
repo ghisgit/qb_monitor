@@ -302,19 +302,23 @@ uv run python main.py
 ```text
 qb_monitor/
 ├── main.py                  # 入口：配置加载、日志初始化、线程启动
-├── client.py                # qBittorrent API 客户端封装（含熔断器 + _request）
-├── models.py                # 数据模型（MatchRule 正则匹配规则）
-├── orchestrator.py          # 编排器：轮询种子、任务分发、卡顿降级、异常恢复
-├── ai_matcher.py            # AI 匹配器：DeepSeek Harness SDK 封装、提示词、JSON 计划校验
-├── media_naming.py          # Jellyfin 官方命名规范纯函数（sanitize/电影/剧集路径）
-├── organize_index.py        # 整理索引：已整理种子的计划缓存（state/organize_index.json）
-├── handlers/
-│   ├── base_handler.py      # 处理器基类：规则匹配、标签清理
-│   ├── added_handler.py     # 添加处理器：跳过匹配规则的文件
-│   ├── category_tag_handler.py # 分类标签处理器：post 链按动作×分类正则补打标签
-│   ├── completed_handler.py # 完成处理器：删除无用文件和空目录
-│   ├── monitor_handler.py   # 监控处理器：追踪卡顿种子，超时降级
-│   └── organize_handler.py  # 整理处理器：AI 匹配计划 → Jellyfin 路径 → 硬链接/拷贝
+├── core/                    # 基础设施
+│   ├── breaker.py           # 熔断器 + 重试配置（CircuitBreaker / RetryConfig）
+│   ├── client.py            # qBittorrent API 客户端封装（含熔断器 + _request）
+│   ├── logger.py            # 日志：FATAL 级别、QBLogger、JSON 格式、上下文/敏感信息过滤
+│   ├── models.py            # 数据模型（MatchRule 正则匹配规则）
+│   └── orchestrator.py      # 编排器：轮询种子、任务分发、卡顿降级、异常恢复
+├── handlers/                # 全部处理器
+│   ├── base.py              # 处理器基类：规则匹配、标签清理
+│   ├── added.py             # 添加处理器：跳过匹配规则的文件
+│   ├── category_tag.py      # 分类标签处理器：post 链按动作×分类正则补打标签
+│   ├── completed.py         # 完成处理器：删除无用文件和空目录
+│   ├── monitor.py           # 监控处理器：追踪卡顿种子，超时降级
+│   └── organize/            # 整理处理器及其专属支撑模块
+│       ├── handler.py       # 整理处理器：AI 匹配计划 → Jellyfin 路径 → 硬链接/拷贝
+│       ├── matcher.py       # AI 匹配器：DeepSeek Harness SDK 封装、提示词、JSON 计划校验
+│       ├── index.py         # 整理索引：已整理种子的计划缓存（state/organize_index.json）
+│       └── naming.py        # Jellyfin 官方命名规范纯函数（sanitize/电影/剧集路径）
 ├── Dockerfile               # Docker 构建文件
 ├── uv.lock                  # uv 锁定文件（自动生成）
 ├── template_config.yaml     # 配置文件模板
@@ -353,8 +357,8 @@ monitoring: 批次任务，不操作种子标签，仅追踪与降级，不进 p
 示例：
 
 ```python
-# handlers/custom_handler.py
-from handlers.base_handler import BaseHandler
+# handlers/custom.py
+from handlers.base import BaseHandler
 
 
 class CustomHandler(BaseHandler):
@@ -365,7 +369,7 @@ class CustomHandler(BaseHandler):
 
 ```python
 # main.py 中注册
-from handlers.custom_handler import CustomHandler
+from handlers.custom import CustomHandler
 
 custom_handler = CustomHandler(client, rules)
 orchestrator.register_handler("custom", custom_handler.handle, enable_post_chain=True)

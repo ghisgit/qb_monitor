@@ -2,8 +2,8 @@ import re
 
 from qbittorrentapi import TorrentDictionary
 
-from client import QBittorrentClient
-from logger import get_logger
+from core.client import QBittorrentClient
+from core.logger import get_logger
 
 CategoryTagMapping = dict[re.Pattern[str], list[str]]
 

@@ -2,7 +2,7 @@ import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from handlers.monitor_handler import MonitorHandler
+from handlers.monitor import MonitorHandler
 
 
 def make_torrent(hash_, name, progress=0.5, state="downloading"):

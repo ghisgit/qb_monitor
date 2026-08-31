@@ -3,7 +3,7 @@ import threading
 
 import pytest
 
-from organize_index import FORMAT_VERSION, OrganizeIndex
+from handlers.organize.index import FORMAT_VERSION, OrganizeIndex
 
 
 def make_entry(fingerprint=None, **overrides):

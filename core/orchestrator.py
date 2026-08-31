@@ -7,8 +7,8 @@ from datetime import timedelta
 
 from qbittorrentapi import TorrentDictionary, TorrentInfoList
 
-from client import QBittorrentClient
-from logger import ContextFilter, get_logger
+from core.client import QBittorrentClient
+from core.logger import ContextFilter, get_logger
 
 logger = get_logger(__name__)
 

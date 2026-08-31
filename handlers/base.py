@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 
-from client import QBittorrentClient
-from logger import get_logger
-from models import MatchRule
+from core.client import QBittorrentClient
+from core.logger import get_logger
+from core.models import MatchRule
 
 
 class BaseHandler(ABC):

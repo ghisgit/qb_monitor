@@ -4,8 +4,8 @@ from pathlib import Path
 
 from qbittorrentapi import TorrentDictionary
 
-from handlers.base_handler import BaseHandler
-from logger import ContextFilter
+from core.logger import ContextFilter
+from handlers.base import BaseHandler
 
 
 class CompletedHandler(BaseHandler):
