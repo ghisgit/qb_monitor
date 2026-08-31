@@ -94,6 +94,12 @@ API Key 在环境变量 TMDB_API_KEY 中（不要在输出、命令或回显中�
 {{"kind": "movie", "title": "TMDB 本地化标题", "year": 2023, "tmdb_id": 12345,
   "files": [{{"file": "与文件列表完全一致的相对路径", "season": 1, "episodes": [1], "episode_title": "可选"}}]}}"""
 
+# 模型偶发会用散文收尾而非 JSON。保留会话上下文追加一次纠正追问，逼它重出 JSON。
+_CORRECTIVE_PROMPT = (
+    "你上一条回复不是合法的 JSON。请立即重新输出：只输出一个 JSON 对象（结构与上面给你的"
+    "输出格式完全一致），不要包含任何解释、代码栅栏、markdown、前后缀或其它文字。"
+)
+
 
 class DeepSeekMatcher:
     """复用一个 DeepSeekHarness runtime 进程，按种子串行执行匹配。"""
@@ -128,8 +134,7 @@ class DeepSeekMatcher:
         for attempt in range(1, attempts + 1):
             session_id = self._next_session_id(context)
             try:
-                result = self._run_once(prompt, session_id)
-                plan = self._validate(self._extract_json(result.final_response), context)
+                plan = self._match_attempt(context, prompt, session_id)
                 self.logger.info(
                     "AI matched '%s' → %s (%d) [%s] via session %s",
                     context.get("name", "?"),
@@ -151,6 +156,25 @@ class DeepSeekMatcher:
                 )
 
         raise MatchError(f"AI match failed after {attempts} attempts: {last_error}") from last_error
+
+    def _match_attempt(self, context: dict, prompt: str, session_id: str) -> MatchPlan:
+        """执行一次匹配：若首轮回复非 JSON，则在同一 session 追加一次纠正追问。
+
+        纠正追问保留会话上下文（agent 已完成 TMDB 查询），模型看到自己上一轮的散文后
+        通常按要求重出 JSON；仍失败则以异常抛出，交由 :meth:`match` 走重试或兜底。
+        """
+        result = self._run_once(prompt, session_id)
+        try:
+            data = self._extract_json(result.final_response)
+        except ValueError:
+            self.logger.info(
+                "AI reply non-JSON for '%s' (session %s); sending corrective turn",
+                context.get("name", "?"),
+                session_id,
+            )
+            corrected = self._run_once(_CORRECTIVE_PROMPT, session_id)
+            data = self._extract_json(corrected.final_response)
+        return self._validate(data, context)
 
     def _run_once(self, prompt: str, session_id: str):
         with self._lock:  # 单 runtime 进程，串行执行 AI 轮次

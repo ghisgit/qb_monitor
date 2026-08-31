@@ -1,3 +1,4 @@
+import argparse
 import os
 import queue
 import re
@@ -166,7 +167,11 @@ def _validate_organize(data: dict) -> None:
 
 
 def main():
-    data = load_config()
+    parser = argparse.ArgumentParser(description="QB Monitor — 自动监控 qBittorrent 的标签驱动工具")
+    parser.add_argument("-c", "--config", default="config.yaml", help="配置文件路径（默认 config.yaml）")
+    args = parser.parse_args()
+
+    data = load_config(args.config)
     setup_logging(data)
 
     logger = get_logger("qb_monitor")

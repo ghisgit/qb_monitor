@@ -184,9 +184,26 @@ class TestRetries:
         assert plan.title == "Movie Name"
 
     def test_non_json_output_raises_match_error(self):
-        matcher = make_matcher([response("这个种子看起来是一部 2023 年的电影。")])
+        matcher = make_matcher(
+            [response("这个种子看起来是一部 2023 年的电影。"), response("我也不清楚，无法输出。")],
+            ai_retries=0,
+        )
         with pytest.raises(MatchError):
             matcher.match(VALID_CONTEXT)
+        assert len(harness_calls(matcher)) == 2
+
+    def test_corrective_turn_recovers_json_on_same_session(self):
+        matcher = make_matcher(
+            [response("这是《牧神记》第 91 集。"), response(MOVIE_RESPONSE)],
+            ai_retries=0,
+        )
+        plan = matcher.match(VALID_CONTEXT)
+        assert plan.title == "Movie Name"
+        calls = harness_calls(matcher)
+        assert len(calls) == 2
+        # 纠正追问复用同一 session 且是纠正提示
+        assert calls[1][1] == calls[0][1]
+        assert "不是合法的 JSON" in calls[1][0]
 
 
 class TestPrompt:
